@@ -1,0 +1,384 @@
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import type { PixelCoordinate, StarOverlay, TransitCutoutPreview } from '../../types/transit';
+
+interface TransitCutoutViewerProps {
+  preview: TransitCutoutPreview;
+  displayCutoutSizePx?: number;
+  stars: StarOverlay[];
+  activeFrameIndex?: number | null;
+  onFrameChange?: (frameIndex: number) => void;
+  frameChangeDisabled?: boolean;
+  frameLoading?: boolean;
+  frameLoadingMessage?: string | null;
+  onAddComparison?: (position: PixelCoordinate) => void;
+  onSelectStar?: (label: string) => void;
+  onMoveStar?: (label: string, position: PixelCoordinate) => void;
+}
+
+const DRAG_THRESHOLD = 4; // px screen distance before a click becomes a drag
+
+export function TransitCutoutViewer({
+  preview,
+  displayCutoutSizePx,
+  stars,
+  activeFrameIndex,
+  onFrameChange,
+  frameChangeDisabled = false,
+  frameLoading = false,
+  frameLoadingMessage,
+  onAddComparison,
+  onSelectStar,
+  onMoveStar,
+}: TransitCutoutViewerProps) {
+  const [zoomScale, setZoomScale] = useState(1);
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  // Drag state kept in refs so mousemove/mouseup listeners stay stable
+  const dragRef = useRef<{
+    label: string;
+    startScreenX: number;
+    startScreenY: number;
+    dragging: boolean;
+  } | null>(null);
+
+  const effectiveDisplaySizePx = Math.min(
+    displayCutoutSizePx ?? preview.cutout_width_px,
+    preview.cutout_width_px
+  );
+  const cropOffsetPx = Math.max(0, (preview.cutout_width_px - effectiveDisplaySizePx) / 2);
+  const cropScale = preview.cutout_width_px / effectiveDisplaySizePx;
+
+  useEffect(() => {
+    setZoomScale(1);
+  }, [preview.observation_id, effectiveDisplaySizePx]);
+
+  /** Convert a screen mouse event to cutout pixel coords */
+  const screenToPixel = useCallback(
+    (clientX: number, clientY: number): PixelCoordinate | null => {
+      const stage = stageRef.current;
+      if (!stage) return null;
+      const rect = stage.getBoundingClientRect();
+      const rawX =
+        cropOffsetPx + ((clientX - rect.left) / rect.width) * effectiveDisplaySizePx;
+      const rawY =
+        cropOffsetPx + ((clientY - rect.top) / rect.height) * effectiveDisplaySizePx;
+      return {
+        x: Math.max(0.5, Math.min(preview.cutout_width_px - 0.5, Math.floor(rawX) + 0.5)),
+        y: Math.max(0.5, Math.min(preview.cutout_height_px - 0.5, Math.floor(rawY) + 0.5)),
+      };
+    },
+    [cropOffsetPx, effectiveDisplaySizePx, preview.cutout_width_px, preview.cutout_height_px]
+  );
+
+  /** Find which star (if any) is under the given pixel position */
+  const hitTestStar = useCallback(
+    (px: PixelCoordinate): StarOverlay | null => {
+      for (const star of stars) {
+        const dx = px.x - star.position.x;
+        const dy = px.y - star.position.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= star.aperture.outerAnnulus + 0.5) {
+          return star;
+        }
+      }
+      return null;
+    },
+    [stars]
+  );
+
+  // --- mouse handlers ---
+
+  const handleMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return; // left-click only
+    if (!onAddComparison) return;
+
+    const px = screenToPixel(event.clientX, event.clientY);
+    if (!px) return;
+
+    const hit = hitTestStar(px);
+    if (hit) {
+      // Start potential drag
+      dragRef.current = {
+        label: hit.label,
+        startScreenX: event.clientX,
+        startScreenY: event.clientY,
+        dragging: false,
+      };
+      onSelectStar?.(hit.label);
+      event.preventDefault();
+    }
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: globalThis.MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      const dx = e.clientX - drag.startScreenX;
+      const dy = e.clientY - drag.startScreenY;
+
+      if (!drag.dragging) {
+        if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
+        drag.dragging = true;
+      }
+
+      const px = screenToPixel(e.clientX, e.clientY);
+      if (px) {
+        onMoveStar?.(drag.label, px);
+      }
+    };
+
+    const handleMouseUp = () => {
+      dragRef.current = null;
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [screenToPixel, onMoveStar]);
+
+  const handleClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!onAddComparison) return;
+    // If we just finished a drag, don't add a new star
+    if (dragRef.current?.dragging) return;
+
+    const px = screenToPixel(event.clientX, event.clientY);
+    if (!px) return;
+
+    // If clicking on an existing star, just select (already done in mousedown)
+    if (hitTestStar(px)) return;
+
+    onAddComparison(px);
+  };
+
+  const stageSize = Math.round(preview.preview_width_px * zoomScale);
+  const currentFrameIndex = activeFrameIndex ?? preview.frame_index ?? 0;
+  const hasMultipleFrames = preview.frame_count > 1;
+  const frameMetadata = preview.frame_metadata;
+
+  return (
+    <div className="transit-cutout-card">
+      <div className="transit-cutout-meta">
+        <div>
+          <span className="badge">Sector {preview.sector}</span>
+          <span className="transit-cutout-subtitle">
+            {preview.camera ? `Camera ${preview.camera}` : 'Camera ?'} /{' '}
+            {preview.ccd ? `CCD ${preview.ccd}` : 'CCD ?'}
+          </span>
+        </div>
+        <span className="selected-count">
+          {preview.cutout_width_px} x {preview.cutout_height_px} px
+        </span>
+      </div>
+
+      <div className="transit-cutout-toolbar">
+        {hasMultipleFrames ? (
+          <div className="transit-frame-controls">
+            <div className="transit-frame-buttons">
+              <button
+                type="button"
+                className="btn-sm"
+                disabled={frameChangeDisabled || currentFrameIndex <= 0}
+                onClick={() => onFrameChange?.(0)}
+              >
+                First
+              </button>
+              <button
+                type="button"
+                className="btn-sm"
+                disabled={frameChangeDisabled || currentFrameIndex <= 0}
+                onClick={() => onFrameChange?.(Math.max(0, currentFrameIndex - 1))}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                className="btn-sm"
+                disabled={frameChangeDisabled || currentFrameIndex >= preview.frame_count - 1}
+                onClick={() =>
+                  onFrameChange?.(Math.min(preview.frame_count - 1, currentFrameIndex + 1))
+                }
+              >
+                Next
+              </button>
+              <button
+                type="button"
+                className="btn-sm"
+                disabled={frameChangeDisabled || currentFrameIndex >= preview.frame_count - 1}
+                onClick={() => onFrameChange?.(preview.frame_count - 1)}
+              >
+                Last
+              </button>
+            </div>
+            <div className="transit-frame-slider">
+              <span className="selected-count">
+                Frame {currentFrameIndex + 1} / {preview.frame_count}
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={preview.frame_count - 1}
+                step={1}
+                value={currentFrameIndex}
+                disabled={frameChangeDisabled}
+                onChange={(event) => onFrameChange?.(Number(event.target.value))}
+              />
+            </div>
+          </div>
+        ) : (
+          <span className="selected-count">Single frame preview</span>
+        )}
+
+        <div className="transit-cutout-zoom">
+          <button
+            type="button"
+            className="btn-sm"
+            disabled={zoomScale <= 1}
+            onClick={() => setZoomScale((current) => Math.max(1, current - 0.5))}
+          >
+            Zoom -
+          </button>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={() => setZoomScale(1)}
+          >
+            1x
+          </button>
+          <button
+            type="button"
+            className="btn-sm"
+            disabled={zoomScale >= 4}
+            onClick={() => setZoomScale((current) => Math.min(4, current + 0.5))}
+          >
+            Zoom +
+          </button>
+          <span className="selected-count">View {zoomScale.toFixed(1)}x</span>
+        </div>
+      </div>
+
+      <div className="transit-cutout-layout">
+        <div className="transit-cutout-frame">
+          <div
+            ref={stageRef}
+            className={`transit-cutout-stage ${onAddComparison ? 'interactive' : ''}`}
+            onMouseDown={handleMouseDown}
+            onClick={handleClick}
+            onDragStart={(e) => e.preventDefault()}
+            style={{ width: `${stageSize}px`, height: `${stageSize}px` }}
+          >
+            <div
+              className="transit-cutout-content"
+              style={{ transform: `scale(${cropScale})` }}
+            >
+              <img
+                src={preview.image_data_url}
+                alt={`TESS cutout for sector ${preview.sector}`}
+                className="transit-cutout-image"
+                draggable={false}
+              />
+              <svg
+                className="transit-cutout-overlay"
+                viewBox={`0 0 ${preview.cutout_width_px} ${preview.cutout_height_px}`}
+                preserveAspectRatio="none"
+              >
+                {stars.map((star) => (
+                  <SourceOverlay key={star.label} star={star} />
+                ))}
+              </svg>
+            </div>
+            {frameLoading && (
+              <div className="transit-cutout-loading">
+                {frameLoadingMessage ?? 'Loading frame...'}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="transit-frame-panel">
+          <div className="transit-frame-panel-head">
+            <strong>Frame Header</strong>
+            {frameLoading && <span>Updating...</span>}
+          </div>
+          <div className="transit-frame-table">
+            <div className="transit-frame-row">
+              <span>Mode</span>
+              <strong>{preview.preview_mode === 'frame' ? 'Frame' : 'Median fallback'}</strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>Frame</span>
+              <strong>{currentFrameIndex + 1} / {preview.frame_count}</strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>BTJD</span>
+              <strong>{frameMetadata?.btjd ?? 'n/a'}</strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>Cadence</span>
+              <strong>{frameMetadata?.cadence_number ?? 'n/a'}</strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>QUALITY</span>
+              <strong>{frameMetadata?.quality_flag ?? 'n/a'}</strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>Finite Pixels</span>
+              <strong>
+                {frameMetadata?.finite_pixels ?? 'n/a'}
+                {frameMetadata?.total_pixels ? ` / ${frameMetadata.total_pixels}` : ''}
+              </strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>Coverage</span>
+              <strong>
+                {frameMetadata?.finite_fraction !== null &&
+                frameMetadata?.finite_fraction !== undefined
+                  ? `${(frameMetadata.finite_fraction * 100).toFixed(1)}%`
+                  : 'n/a'}
+              </strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>Flux Median</span>
+              <strong>{frameMetadata?.flux_median ?? 'n/a'}</strong>
+            </div>
+            <div className="transit-frame-row">
+              <span>Flux Range</span>
+              <strong>
+                {frameMetadata?.flux_min ?? 'n/a'}
+                {frameMetadata?.flux_max !== null && frameMetadata?.flux_max !== undefined
+                  ? ` .. ${frameMetadata.flux_max}`
+                  : ''}
+              </strong>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function SourceOverlay({ star }: { star: StarOverlay }) {
+  const { label, position, aperture, type, selected } = star;
+  const cls = type === 'target' ? 'target' : 'comparison';
+
+  return (
+    <g className={`transit-source-overlay ${cls} ${selected ? 'selected' : ''}`}>
+      <circle cx={position.x} cy={position.y} r={aperture.outerAnnulus} />
+      <circle cx={position.x} cy={position.y} r={aperture.innerAnnulus} />
+      <circle cx={position.x} cy={position.y} r={aperture.apertureRadius} />
+      {selected && (
+        <circle
+          cx={position.x}
+          cy={position.y}
+          r={aperture.outerAnnulus + 0.6}
+          className="transit-source-selection-ring"
+        />
+      )}
+      <text x={position.x + aperture.outerAnnulus + 0.35} y={position.y - 0.35}>
+        {label}
+      </text>
+    </g>
+  );
+}

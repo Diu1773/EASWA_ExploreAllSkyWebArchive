@@ -1,0 +1,76 @@
+from pydantic import BaseModel, Field
+
+from schemas.lightcurve import LightCurveResponse
+
+
+class PixelCoordinate(BaseModel):
+    x: float
+    y: float
+
+
+class TransitFrameMetadata(BaseModel):
+    frame_index: int | None = None
+    btjd: float | None = None
+    cadence_number: int | None = None
+    quality_flag: int | None = None
+    finite_fraction: float | None = None
+    finite_pixels: int | None = None
+    total_pixels: int | None = None
+    flux_min: float | None = None
+    flux_median: float | None = None
+    flux_max: float | None = None
+
+
+class TransitCutoutPreviewResponse(BaseModel):
+    target_id: str
+    observation_id: str
+    sector: int
+    camera: int | None = None
+    ccd: int | None = None
+    preview_mode: str = "median"
+    frame_index: int | None = None
+    sample_frame_indices: list[int] = Field(default_factory=list)
+    cutout_size_px: int
+    cutout_width_px: int
+    cutout_height_px: int
+    preview_width_px: int
+    preview_height_px: int
+    frame_count: int
+    time_start: float
+    time_end: float
+    frame_metadata: TransitFrameMetadata | None = None
+    target_position: PixelCoordinate
+    image_data_url: str
+
+
+class TransitPhotometryRequest(BaseModel):
+    target_id: str
+    observation_id: str
+    cutout_size_px: int = 35
+    target_position: PixelCoordinate
+    comparison_positions: list[PixelCoordinate] = Field(default_factory=list)
+    aperture_radius: float = 2.5
+    inner_annulus: float = 4.0
+    outer_annulus: float = 6.0
+
+
+class TransitPhotometryResponse(BaseModel):
+    target_id: str
+    observation_id: str
+    sector: int
+    frame_count: int
+    comparison_count: int
+    target_position: PixelCoordinate
+    comparison_positions: list[PixelCoordinate]
+    target_median_flux: float
+    comparison_median_flux: float
+    light_curve: LightCurveResponse
+
+
+class TransitPreviewJobResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: float
+    message: str
+    result: TransitCutoutPreviewResponse | None = None
+    error: str | None = None

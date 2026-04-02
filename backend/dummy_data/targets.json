@@ -1,0 +1,74 @@
+[
+  {
+    "id": "algol",
+    "name": "Algol (Beta Persei)",
+    "ra": 47.0422,
+    "dec": 40.9568,
+    "constellation": "Perseus",
+    "type": "EA",
+    "period_days": 2.867315,
+    "magnitude_range": "2.1 - 3.4 V",
+    "description": "Algol is the prototype eclipsing binary system. Its primary eclipses cause a dramatic brightness drop of about 1.3 magnitudes every 2.87 days, making it ideal for educational photometry exercises.",
+    "topic_id": "eclipsing_binary"
+  },
+  {
+    "id": "beta_lyrae",
+    "name": "Beta Lyrae",
+    "ra": 282.52,
+    "dec": 33.3628,
+    "constellation": "Lyra",
+    "type": "EB",
+    "period_days": 12.9414,
+    "magnitude_range": "3.3 - 4.4 V",
+    "description": "Beta Lyrae is a semi-detached eclipsing binary with continuous brightness variation due to ellipsoidal distortion of the stars. Its light curve shows smooth, sinusoidal changes.",
+    "topic_id": "eclipsing_binary"
+  },
+  {
+    "id": "w_uma",
+    "name": "W Ursae Majoris",
+    "ra": 148.5608,
+    "dec": 55.9572,
+    "constellation": "Ursa Major",
+    "type": "EW",
+    "period_days": 0.3336,
+    "magnitude_range": "7.8 - 8.5 V",
+    "description": "W UMa is a contact binary where both stars fill their Roche lobes. Its very short period of about 8 hours makes it possible to observe a full cycle in a single night.",
+    "topic_id": "eclipsing_binary"
+  },
+  {
+    "id": "delta_cep",
+    "name": "Delta Cephei",
+    "ra": 337.2929,
+    "dec": 58.4153,
+    "constellation": "Cepheus",
+    "type": "DCEP",
+    "period_days": 5.366341,
+    "magnitude_range": "3.5 - 4.4 V",
+    "description": "Delta Cephei is the prototype Cepheid variable. Its brightness varies with a characteristic rapid rise and slow decline, governed by the period-luminosity relation used to measure cosmic distances.",
+    "topic_id": "variable_star"
+  },
+  {
+    "id": "rr_lyr",
+    "name": "RR Lyrae",
+    "ra": 286.8817,
+    "dec": 42.7842,
+    "constellation": "Lyra",
+    "type": "RRAB",
+    "period_days": 0.56684,
+    "magnitude_range": "7.1 - 8.1 V",
+    "description": "RR Lyrae is the prototype RR Lyrae variable, a pulsating star found in globular clusters. Its short period and asymmetric light curve are distinctive.",
+    "topic_id": "variable_star"
+  },
+  {
+    "id": "mira",
+    "name": "Mira (Omicron Ceti)",
+    "ra": 34.8365,
+    "dec": -2.9776,
+    "constellation": "Cetus",
+    "type": "M",
+    "period_days": 331.96,
+    "magnitude_range": "2.0 - 10.1 V",
+    "description": "Mira is the prototype long-period variable. Its enormous brightness range of over 8 magnitudes makes it visible to the naked eye at maximum and invisible at minimum.",
+    "topic_id": "variable_star"
+  }
+]

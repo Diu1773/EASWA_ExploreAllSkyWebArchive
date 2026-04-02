@@ -1,0 +1,153 @@
+[
+  {
+    "id": "hd_209458_b",
+    "name": "HD 209458 b",
+    "ra": 330.794887,
+    "dec": 18.884923,
+    "constellation": "Pegasus",
+    "type": "Transit Planet",
+    "period_days": 3.52474859,
+    "magnitude_range": "7.65 V host",
+    "description": "HD 209458 b is a classic hot Jupiter transit target. Its host star is bright and the transit depth is large enough to make it a strong first-choice system for educational TESS transit analysis.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 56, "camera": 1, "ccd": 2 },
+      { "sector": 82, "camera": 1, "ccd": 1 }
+    ]
+  },
+  {
+    "id": "wasp_43_b",
+    "name": "WASP-43 b",
+    "ra": 154.908186,
+    "dec": -9.806443,
+    "constellation": "Sextans",
+    "type": "Transit Planet",
+    "period_days": 0.81347436,
+    "magnitude_range": "12.4 V host",
+    "description": "WASP-43 b is a short-period hot Jupiter with frequent transits. Its repeated events make it useful for phase-folded transit exploration with TESS sectors.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 9, "camera": 1, "ccd": 1 },
+      { "sector": 35, "camera": 1, "ccd": 2 },
+      { "sector": 62, "camera": 1, "ccd": 3 }
+    ]
+  },
+  {
+    "id": "wasp_18_b",
+    "name": "WASP-18 b",
+    "ra": 24.354311,
+    "dec": -45.677887,
+    "constellation": "Phoenix",
+    "type": "Transit Planet",
+    "period_days": 0.94145299,
+    "magnitude_range": "9.3 V host",
+    "description": "WASP-18 b is a bright-host hot Jupiter system with deep, frequent transits. It is a practical target for a simple aperture-plus-comparison-star workflow.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 2, "camera": 2, "ccd": 2 },
+      { "sector": 3, "camera": 2, "ccd": 1 },
+      { "sector": 29, "camera": 2, "ccd": 2 }
+    ]
+  },
+  {
+    "id": "hat_p_7_b",
+    "name": "HAT-P-7 b",
+    "ra": 292.24719,
+    "dec": 47.9695429,
+    "constellation": "Cygnus",
+    "type": "Transit Planet",
+    "period_days": 2.20474,
+    "magnitude_range": "10.48 V host",
+    "description": "HAT-P-7 b is a bright Kepler-field hot Jupiter with a short period and multiple TESS sectors, making it useful for a compact transit workflow with repeated events.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 14, "camera": 2, "ccd": 4 },
+      { "sector": 15, "camera": 2, "ccd": 3 },
+      { "sector": 40, "camera": 2, "ccd": 4 }
+    ]
+  },
+  {
+    "id": "wasp_121_b",
+    "name": "WASP-121 b",
+    "ra": 107.6002312,
+    "dec": -39.0972705,
+    "constellation": "Puppis",
+    "type": "Transit Planet",
+    "period_days": 1.27492504,
+    "magnitude_range": "10.51 V host",
+    "description": "WASP-121 b is a bright ultra-hot Jupiter with deep, frequent transits. It is a strong target when you want clear transit structure within a short time span.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 6, "camera": 3, "ccd": 1 },
+      { "sector": 7, "camera": 3, "ccd": 2 },
+      { "sector": 33, "camera": 3, "ccd": 1 }
+    ]
+  },
+  {
+    "id": "gj_436_b",
+    "name": "GJ 436 b",
+    "ra": 175.5505363,
+    "dec": 26.7030669,
+    "constellation": "Leo",
+    "type": "Transit Planet",
+    "period_days": 2.64388312,
+    "magnitude_range": "10.67 V host",
+    "description": "GJ 436 b is a well-known warm Neptune around a relatively bright host. It broadens the sample beyond hot Jupiters while staying accessible to the same TESS workflow.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 22, "camera": 1, "ccd": 1 },
+      { "sector": 49, "camera": 1, "ccd": 2 }
+    ]
+  },
+  {
+    "id": "wasp_19_b",
+    "name": "WASP-19 b",
+    "ra": 148.4167672,
+    "dec": -45.6591078,
+    "constellation": "Vela",
+    "type": "Transit Planet",
+    "period_days": 0.78883852,
+    "magnitude_range": "12.25 V host",
+    "description": "WASP-19 b has an extremely short period, so transits repeat quickly within a sector. It is useful when you want a dense sequence of transit events to inspect.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 9, "camera": 2, "ccd": 2 },
+      { "sector": 36, "camera": 2, "ccd": 1 },
+      { "sector": 62, "camera": 2, "ccd": 2 }
+    ]
+  },
+  {
+    "id": "wasp_4_b",
+    "name": "WASP-4 b",
+    "ra": 353.5629149,
+    "dec": -42.0617794,
+    "constellation": "Phoenix",
+    "type": "Transit Planet",
+    "period_days": 1.338230994,
+    "magnitude_range": "12.48 V host",
+    "description": "WASP-4 b is a classic short-period hot Jupiter and a practical comparison target alongside WASP-18 b for southern-sector transit exploration.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 2, "camera": 2, "ccd": 4 },
+      { "sector": 28, "camera": 2, "ccd": 3 },
+      { "sector": 29, "camera": 2, "ccd": 4 }
+    ]
+  },
+  {
+    "id": "qatar_1_b",
+    "name": "Qatar-1 b",
+    "ra": 303.3818697,
+    "dec": 65.1623313,
+    "constellation": "Draco",
+    "type": "Transit Planet",
+    "period_days": 1.4200242,
+    "magnitude_range": "12.69 V host",
+    "description": "Qatar-1 b is a compact hot Jupiter system with multiple northern TESS sectors. It adds another repeat-transit target with a moderately bright host star.",
+    "topic_id": "exoplanet_transit",
+    "fallback_sectors": [
+      { "sector": 14, "camera": 2, "ccd": 1 },
+      { "sector": 15, "camera": 2, "ccd": 1 },
+      { "sector": 16, "camera": 2, "ccd": 1 }
+    ]
+  }
+]
