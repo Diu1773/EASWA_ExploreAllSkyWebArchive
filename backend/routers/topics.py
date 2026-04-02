@@ -4,11 +4,6 @@ from schemas.topic import TopicListResponse, Topic
 
 router = APIRouter(tags=["topics"])
 
-CDS_HIPS2FITS = (
-    "https://alasky.cds.unistra.fr/hips-image-services/hips2fits"
-    "?hips=P/DSS2/color&width=320&height=180&projection=TAN&coordsys=icrs&format=jpg"
-)
-
 TOPICS = [
     Topic(
         id="eclipsing_binary",
@@ -16,8 +11,8 @@ TOPICS = [
         description="식쌍성의 광도곡선을 분석하여 공전 주기와 식 깊이를 탐구합니다.",
         icon="🌑",
         target_count=3,
-        preview_label="DSS2 / ALGOL",
-        preview_image_url=f"{CDS_HIPS2FITS}&fov=0.35&ra=47.0422&dec=40.9568",
+        preview_label="ESO / L. Calçada",
+        preview_image_url="https://www.eso.org/public/archives/images/screen/eso1311a.jpg",
     ),
     Topic(
         id="variable_star",
@@ -25,8 +20,8 @@ TOPICS = [
         description="맥동변광성과 장주기변광성의 밝기 변화를 관측하고 분석합니다.",
         icon="⭐",
         target_count=3,
-        preview_label="DSS2 / DELTA CEP",
-        preview_image_url=f"{CDS_HIPS2FITS}&fov=0.35&ra=337.2929&dec=58.4153",
+        preview_label="NASA / ESA / Hubble Heritage",
+        preview_image_url="https://cdn.esahubble.org/archives/images/screen/heic1323a.jpg",
     ),
     Topic(
         id="exoplanet_transit",
@@ -34,8 +29,8 @@ TOPICS = [
         description="TESS 관측 자료를 바탕으로 외계행성 transit 광도곡선을 탐구합니다.",
         icon="🪐",
         target_count=100,
-        preview_label="DSS2 / HD 209458",
-        preview_image_url=f"{CDS_HIPS2FITS}&fov=0.25&ra=330.794887&dec=18.884923",
+        preview_label="ESA / Hubble",
+        preview_image_url="https://cdn.esahubble.org/archives/images/screen/heic0612b.jpg",
     ),
 ]
 
