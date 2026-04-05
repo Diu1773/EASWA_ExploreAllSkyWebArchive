@@ -3,14 +3,18 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import time
 import uuid
 import zipfile
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from threading import Lock
-from typing import Callable
+from functools import lru_cache
+from queue import Empty, Queue
+from threading import Lock, Thread
+from typing import Any, Callable
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -20,6 +24,8 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from PIL import Image
 
+logger = logging.getLogger(__name__)
+
 from adapters.transit_archive import archive as transit_archive
 from config import (
     TRANSIT_PREVIEW_JOB_MAX_ITEMS,
@@ -28,6 +34,9 @@ from config import (
 from schemas.lightcurve import LightCurvePoint, LightCurveResponse
 from schemas.transit import (
     PixelCoordinate,
+    TransitApertureConfig,
+    TransitComparisonDiagnostic,
+    TICStarInfo,
     TransitCutoutPreviewResponse,
     TransitFrameMetadata,
     TransitPhotometryRequest,
@@ -35,16 +44,30 @@ from schemas.transit import (
     TransitPreviewJobResponse,
 )
 
+_MAST_TIC_URL = "https://mast.stsci.edu/api/v0/invoke"
+
 _TESSCUT_ASTROCUT_URL = "https://mast.stsci.edu/tesscut/api/v0.1/astrocut"
 _DEFAULT_CUTOUT_SIZE_PX = 35
-_ALLOWED_CUTOUT_SIZES_PX = (30, 35, 40)
+_FRAME_COUNT_LOOKUP_SIZE_PX = 1
+_ALLOWED_CUTOUT_SIZES_PX = (30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99)
 _PREVIEW_SIZE_PX = 456
 _CUTOUT_CACHE_MAX_ITEMS = 4
 _CUTOUT_CACHE_MAX_BYTES = 96 * 1024 * 1024
+_HOT_CUTOUT_CACHE_MAX_ITEMS = 1
+_HOT_CUTOUT_CACHE_TTL_SECONDS = 20 * 60
+_TIC_EDGE_MARGIN_PX = 6.0
+_TIC_MIN_LOCAL_COVERAGE = 0.85
+_TIC_MIN_SIGNAL_SIGMA = 3.0
+_TIC_DUPLICATE_TOLERANCE_PX = 0.75
+_TIC_TARGET_EXCLUSION_PX = 1.0
+_MAX_COMPARISON_DIAGNOSTIC_POINTS = 1500
 
 
 _cutout_cache_lock = Lock()
 _cutout_cache: "OrderedDict[tuple[str, str, int, int], CutoutDataset]" = OrderedDict()
+_hot_cutout_cache: "OrderedDict[tuple[str, str, int, int], tuple[float, CutoutDataset]]" = (
+    OrderedDict()
+)
 _preview_job_lock = Lock()
 _preview_jobs: "OrderedDict[str, dict]" = OrderedDict()
 _preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tess-preview")
@@ -72,6 +95,15 @@ class CutoutDataset:
     target_position: PixelCoordinate
     cadence_numbers: np.ndarray | None = None
     quality_flags: np.ndarray | None = None
+    wcs: WCS | None = None
+
+
+@dataclass(frozen=True)
+class _ResolvedAperture:
+    position: PixelCoordinate
+    aperture_radius: float
+    inner_annulus: float
+    outer_annulus: float
 
 
 def _normalize_cutout_size(size_px: int | None) -> int:
@@ -139,6 +171,208 @@ def cancel_preview_job(job_id: str) -> TransitPreviewJobResponse:
         return _serialize_preview_job(state)
 
 
+def _query_tic_stars(
+    ra: float,
+    dec: float,
+    radius_arcmin: float,
+    target_tmag: float | None,
+    wcs_obj,
+    reference_image: np.ndarray,
+    finite_coverage: np.ndarray,
+    max_stars: int = 15,
+    ) -> list[TICStarInfo]:
+    """Query MAST TIC catalog for bright stars near the target."""
+    try:
+        rows = _query_tic_rows(ra, dec, radius_arcmin)
+        if not rows:
+            return []
+
+        target_coord = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
+        try:
+            target_px, target_py = wcs_obj.all_world2pix([[float(ra), float(dec)]], 0)[0]
+            target_pixel = PixelCoordinate(
+                x=round(float(target_px) + 0.5, 2),
+                y=round(float(target_py) + 0.5, 2),
+            )
+        except Exception:
+            target_pixel = None
+        stars: list[TICStarInfo] = []
+        seen_tic_ids: set[str] = set()
+
+        for row in rows:
+            star_ra = row.get("ra")
+            star_dec = row.get("dec")
+            tmag = row.get("Tmag")
+            tic_id = str(row.get("ID", ""))
+
+            if star_ra is None or star_dec is None or tmag is None:
+                continue
+            if not isinstance(tmag, (int, float)) or tmag > 16:
+                continue
+
+            star_coord = SkyCoord(ra=float(star_ra) * u.deg, dec=float(star_dec) * u.deg)
+            sep_arcmin = float(target_coord.separation(star_coord).arcmin)
+
+            # Skip the target itself (within ~0.1')
+            if sep_arcmin < 0.1:
+                continue
+
+            # Convert RA/Dec to pixel using WCS
+            try:
+                px, py = wcs_obj.all_world2pix([[float(star_ra), float(star_dec)]], 0)[0]
+                pixel = PixelCoordinate(x=round(float(px) + 0.5, 2), y=round(float(py) + 0.5, 2))
+            except Exception:
+                continue
+
+            if tic_id in seen_tic_ids:
+                continue
+            if target_pixel is not None and np.hypot(
+                pixel.x - target_pixel.x,
+                pixel.y - target_pixel.y,
+            ) <= _TIC_TARGET_EXCLUSION_PX:
+                continue
+            if any(
+                np.hypot(pixel.x - candidate.pixel.x, pixel.y - candidate.pixel.y)
+                <= _TIC_DUPLICATE_TOLERANCE_PX
+                for candidate in stars
+            ):
+                continue
+            if not _is_viable_tic_star(pixel, reference_image, finite_coverage):
+                continue
+
+            # Check if variable — disposition or lumclass hints
+            disposition = str(row.get("disposition", "") or "")
+            is_variable = "VARIABLE" in disposition.upper()
+
+            # Recommend if: bright, not variable, similar mag to target
+            recommended = False
+            if not is_variable and tmag < 14:
+                if target_tmag is None or abs(tmag - target_tmag) < 3.0:
+                    recommended = True
+
+            stars.append(TICStarInfo(
+                tic_id=tic_id,
+                pixel=pixel,
+                tmag=round(float(tmag), 2),
+                distance_arcmin=round(sep_arcmin, 2),
+                is_variable=is_variable,
+                recommended=recommended,
+            ))
+            seen_tic_ids.add(tic_id)
+
+        # Sort by brightness
+        stars.sort(key=lambda s: s.tmag or 99)
+
+        # Limit count and mark top 3 non-variable as recommended
+        stars = stars[:max_stars]
+        rec_count = 0
+        for star in stars:
+            if star.recommended and rec_count < 3:
+                rec_count += 1
+            elif star.recommended:
+                star.recommended = False
+
+        return stars
+
+    except Exception as exc:
+        logger.warning("TIC catalog query failed: %s", exc)
+        return []
+
+
+@lru_cache(maxsize=128)
+def _query_tic_rows(
+    ra: float,
+    dec: float,
+    radius_arcmin: float,
+) -> list[dict[str, Any]]:
+    request_payload = {
+        "service": "Mast.Catalogs.Filtered.Tic.Position.Rows",
+        "format": "json",
+        "params": {
+            "columns": "ID,ra,dec,Tmag,objType,lumclass,disposition",
+            "filters": [],
+            "ra": ra,
+            "dec": dec,
+            "radius": radius_arcmin / 60.0,
+        },
+    }
+
+    body = f"request={quote(json.dumps(request_payload))}"
+    request = Request(
+        _MAST_TIC_URL,
+        data=body.encode("utf-8"),
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "text/plain",
+        },
+        method="POST",
+    )
+
+    with urlopen(request, timeout=15) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    return result.get("data", [])
+
+
+def _is_viable_tic_star(
+    pixel: PixelCoordinate,
+    reference_image: np.ndarray,
+    finite_coverage: np.ndarray,
+) -> bool:
+    height, width = reference_image.shape
+    if (
+        pixel.x < _TIC_EDGE_MARGIN_PX
+        or pixel.x > width - _TIC_EDGE_MARGIN_PX
+        or pixel.y < _TIC_EDGE_MARGIN_PX
+        or pixel.y > height - _TIC_EDGE_MARGIN_PX
+    ):
+        return False
+
+    x = int(round(pixel.x - 0.5))
+    y = int(round(pixel.y - 0.5))
+
+    inner_y0 = max(0, y - 1)
+    inner_y1 = min(height, y + 2)
+    inner_x0 = max(0, x - 1)
+    inner_x1 = min(width, x + 2)
+    outer_y0 = max(0, y - 4)
+    outer_y1 = min(height, y + 5)
+    outer_x0 = max(0, x - 4)
+    outer_x1 = min(width, x + 5)
+
+    inner_patch = reference_image[inner_y0:inner_y1, inner_x0:inner_x1]
+    outer_patch = reference_image[outer_y0:outer_y1, outer_x0:outer_x1]
+    coverage_patch = finite_coverage[outer_y0:outer_y1, outer_x0:outer_x1]
+    if inner_patch.size == 0 or outer_patch.size == 0 or coverage_patch.size == 0:
+        return False
+
+    local_coverage = float(np.nanmean(coverage_patch))
+    if not np.isfinite(local_coverage) or local_coverage < _TIC_MIN_LOCAL_COVERAGE:
+        return False
+
+    inner_finite = inner_patch[np.isfinite(inner_patch)]
+    outer_finite_mask = np.isfinite(outer_patch)
+    if inner_finite.size == 0 or outer_finite_mask.sum() < 12:
+        return False
+
+    inner_peak = float(np.nanmax(inner_finite))
+    outer_mask = np.ones_like(outer_patch, dtype=bool)
+    outer_mask[
+        inner_y0 - outer_y0 : inner_y1 - outer_y0,
+        inner_x0 - outer_x0 : inner_x1 - outer_x0,
+    ] = False
+    background = outer_patch[outer_mask & outer_finite_mask]
+    if background.size < 8:
+        return False
+
+    background_level = float(np.nanmedian(background))
+    background_sigma = float(np.nanstd(background))
+    if not np.isfinite(background_sigma) or background_sigma <= 0:
+        background_sigma = max(abs(background_level) * 0.05, 1e-3)
+
+    return inner_peak > background_level + (_TIC_MIN_SIGNAL_SIGMA * background_sigma)
+
+
 def get_cutout_preview(
     target_id: str,
     observation_id: str,
@@ -168,6 +402,24 @@ def get_cutout_preview(
         frame_index=frame_index,
     )
     height, width = dataset.flux_cube.shape[1:]
+    # Query TIC catalog for comparison star recommendations
+    tic_stars: list[TICStarInfo] = []
+    if dataset.wcs is not None:
+        fov_radius_arcmin = (normalized_size_px * 21.0) / 60.0 / 2.0
+        target_tmag = target.get("tmag") or target.get("host_vmag")
+        reference_index = _best_frame_index(dataset.flux_cube, dataset.quality_flags)
+        reference_image = np.asarray(dataset.flux_cube[reference_index], dtype=np.float32)
+        finite_coverage = np.mean(np.isfinite(dataset.flux_cube), axis=0)
+        tic_stars = _query_tic_stars(
+            ra=target["ra"],
+            dec=target["dec"],
+            radius_arcmin=fov_radius_arcmin,
+            target_tmag=target_tmag,
+            wcs_obj=dataset.wcs,
+            reference_image=reference_image,
+            finite_coverage=finite_coverage,
+        )
+
     _notify_progress(progress_callback, 1.0, "Transit cutout preview ready.")
 
     return TransitCutoutPreviewResponse(
@@ -190,12 +442,50 @@ def get_cutout_preview(
         frame_metadata=_build_frame_metadata(dataset, resolved_frame_index),
         target_position=dataset.target_position,
         image_data_url=image_data_url,
+        tic_stars=tic_stars,
     )
 
 
-def run_transit_photometry(req: TransitPhotometryRequest) -> TransitPhotometryResponse:
-    target = _require_target(req.target_id)
-    observation = _require_observation(req.target_id, req.observation_id)
+def get_observation_frame_count(
+    target_id: str,
+    target_ra: float,
+    target_dec: float,
+    observation: dict[str, Any],
+) -> int | None:
+    try:
+        dataset = _load_cutout_dataset(
+            target_id,
+            str(observation["id"]),
+            float(target_ra),
+            float(target_dec),
+            int(observation["sector"]),
+            int(observation["camera"]) if observation.get("camera") is not None else None,
+            int(observation["ccd"]) if observation.get("ccd") is not None else None,
+            str(observation.get("cutout_url") or ""),
+            _FRAME_COUNT_LOOKUP_SIZE_PX,
+        )
+    except Exception as error:
+        logger.warning(
+            "Observation frame-count lookup failed for %s/%s: %s",
+            target_id,
+            observation.get("id"),
+            error,
+        )
+        return None
+
+    return int(dataset.flux_cube.shape[0])
+
+
+def run_transit_photometry(
+    req: TransitPhotometryRequest,
+    progress_callback: Callable[[float, str], None] | None = None,
+) -> TransitPhotometryResponse:
+    def emit(progress: float, message: str) -> None:
+        _notify_progress(progress_callback, float(np.clip(progress, 0.0, 1.0)), message)
+
+    emit(0.02, "Resolving target and observation context.")
+    target = _resolve_photometry_target(req)
+    observation = _resolve_photometry_observation(req)
     dataset = _load_cutout_dataset(
         req.target_id,
         req.observation_id,
@@ -206,111 +496,252 @@ def run_transit_photometry(req: TransitPhotometryRequest) -> TransitPhotometryRe
         observation.get("ccd"),
         observation["cutout_url"],
         _normalize_cutout_size(req.cutout_size_px),
+        progress_callback=lambda progress, message: emit(
+            0.05 + (0.5 * float(np.clip(progress, 0.0, 1.0))),
+            message,
+        ),
     )
 
-    aperture_radius = float(np.clip(req.aperture_radius, 1.0, 6.0))
-    inner_annulus = float(np.clip(req.inner_annulus, aperture_radius + 0.5, 7.0))
-    outer_annulus = float(
-        np.clip(
-            req.outer_annulus,
-            inner_annulus + 0.5,
-            min(dataset.flux_cube.shape[1:]) / 1.8,
+    emit(0.58, "Preparing apertures and cadence filters.")
+    target_aperture, comparison_apertures = _resolve_aperture_requests(req, dataset)
+
+    # Filter bad cadences using TESS quality flags
+    # Bit flags: momentum dump (bit 5=32), coarse point (bit 3=8),
+    # Earth/Moon in FOV (bit 4=16), scattered light (bit 12=4096)
+    quality_mask = np.ones(dataset.flux_cube.shape[0], dtype=bool)
+    if dataset.quality_flags is not None:
+        # Keep only cadences with no critical quality issues
+        bad_bits = 8 | 16 | 32 | 4096  # coarse point, Earth/Moon, momentum dump, scattered light
+        quality_mask = (dataset.quality_flags & bad_bits) == 0
+        logger.info(
+            "Quality flag filter: keeping %d / %d cadences",
+            quality_mask.sum(), len(quality_mask),
         )
-    )
 
+    flux_cube = dataset.flux_cube[quality_mask]
+    times_filtered = dataset.times[quality_mask]
+
+    emit(0.66, "Measuring target aperture flux.")
     target_flux = _extract_net_flux(
-        dataset.flux_cube,
-        req.target_position,
-        aperture_radius,
-        inner_annulus,
-        outer_annulus,
+        flux_cube,
+        target_aperture.position,
+        target_aperture.aperture_radius,
+        target_aperture.inner_annulus,
+        target_aperture.outer_annulus,
     )
-
-    comparison_fluxes = [
-        _extract_net_flux(
-            dataset.flux_cube,
-            position,
-            aperture_radius,
-            inner_annulus,
-            outer_annulus,
-        )
-        for position in req.comparison_positions[:3]
-    ]
-
-    finite_mask = np.isfinite(target_flux) & (target_flux > 0)
-    if not finite_mask.any():
+    target_mask = np.isfinite(target_flux) & (target_flux > 0)
+    if not target_mask.any():
         raise ValueError("Target aperture did not produce any valid flux samples.")
 
-    normalized_target = target_flux / np.nanmedian(target_flux[finite_mask])
+    normalized_target = np.full(target_flux.shape, np.nan, dtype=np.float64)
+    target_median_flux = float(np.nanmedian(target_flux[target_mask]))
+    normalized_target[target_mask] = target_flux[target_mask] / target_median_flux
 
-    if comparison_fluxes:
-        normalized_comparisons = []
-        valid_comparison_fluxes = []
-        for comparison_flux in comparison_fluxes:
-            comparison_mask = np.isfinite(comparison_flux) & (comparison_flux > 0)
-            if not comparison_mask.any():
+    diagnostic_payloads: list[dict[str, Any]] = []
+    comparison_series: list[dict[str, Any]] = []
+    total_comparisons = max(len(comparison_apertures), 1)
+    for index, comparison_aperture in enumerate(comparison_apertures, start=1):
+        emit(
+            0.72 + 0.14 * ((index - 1) / total_comparisons),
+            f"Measuring comparison star C{index} flux.",
+        )
+        comparison_flux = _extract_net_flux(
+            flux_cube,
+            comparison_aperture.position,
+            comparison_aperture.aperture_radius,
+            comparison_aperture.inner_annulus,
+            comparison_aperture.outer_annulus,
+        )
+        comparison_mask = np.isfinite(comparison_flux) & (comparison_flux > 0)
+        if not comparison_mask.any():
+            continue
+
+        comparison_median = float(np.nanmedian(comparison_flux[comparison_mask]))
+        normalized_comparison = np.full(comparison_flux.shape, np.nan, dtype=np.float64)
+        normalized_comparison[comparison_mask] = (
+            comparison_flux[comparison_mask] / comparison_median
+        )
+
+        pair_mask = target_mask & comparison_mask
+        if int(pair_mask.sum()) < 3:
+            continue
+
+        pair_flux = normalized_target[pair_mask] / normalized_comparison[pair_mask]
+        pair_flux /= np.nanmedian(pair_flux)
+        pair_rms = float(np.nanstd(pair_flux))
+        pair_mad = _robust_mad(pair_flux)
+        raw_weight = 1.0 / max(pair_rms, pair_mad * 1.4826, 0.0005) ** 2
+
+        diagnostic_payloads.append(
+            {
+                "label": f"C{index}",
+                "position": comparison_aperture.position,
+                "aperture_radius": comparison_aperture.aperture_radius,
+                "inner_annulus": comparison_aperture.inner_annulus,
+                "outer_annulus": comparison_aperture.outer_annulus,
+                "valid_frame_count": int(pair_mask.sum()),
+                "median_flux": round(comparison_median, 2),
+                "differential_rms": round(pair_rms, 6),
+                "differential_mad": round(pair_mad, 6),
+                "raw_weight": raw_weight,
+                "light_curve": _build_light_curve_response(
+                    req.target_id,
+                    target.get("period_days"),
+                    times_filtered[pair_mask],
+                    pair_flux,
+                    y_label="Normalized Flux",
+                    max_points=_MAX_COMPARISON_DIAGNOSTIC_POINTS,
+                ),
+            }
+        )
+        comparison_series.append(
+            {
+                "normalized": normalized_comparison,
+                "raw_flux": comparison_flux,
+                "weight": raw_weight,
+            }
+        )
+
+    emit(
+        0.88,
+        "Combining comparison-star ensemble."
+        if comparison_series
+        else "No valid comparison-star ensemble; using target-only normalization.",
+    )
+    if comparison_series:
+        weighted_sum = np.zeros_like(normalized_target, dtype=np.float64)
+        total_weight = np.zeros_like(normalized_target, dtype=np.float64)
+        total_comparison_flux = np.zeros_like(normalized_target, dtype=np.float64)
+
+        for series in comparison_series:
+            normalized_comparison = series["normalized"]
+            valid = np.isfinite(normalized_comparison) & (normalized_comparison > 0)
+            if not valid.any():
                 continue
-            finite_mask &= comparison_mask
-            valid_comparison_fluxes.append(comparison_flux)
-            normalized_comparisons.append(
-                comparison_flux / np.nanmedian(comparison_flux[comparison_mask])
-            )
+            weight = float(series["weight"])
+            weighted_sum[valid] += normalized_comparison[valid] * weight
+            total_weight[valid] += weight
+            total_comparison_flux[valid] += series["raw_flux"][valid]
 
-        if normalized_comparisons:
-            comparison_reference = np.nanmean(
-                np.vstack(normalized_comparisons),
-                axis=0,
-            )
-            differential_flux = normalized_target / comparison_reference
-            comparison_median_flux = float(
-                np.nanmedian(np.sum(np.vstack(valid_comparison_fluxes), axis=0))
-            )
-        else:
-            differential_flux = normalized_target
-            comparison_median_flux = 0.0
+        comparison_reference = np.full_like(normalized_target, np.nan, dtype=np.float64)
+        available_comparison = total_weight > 0
+        comparison_reference[available_comparison] = (
+            weighted_sum[available_comparison] / total_weight[available_comparison]
+        )
+        differential_flux = np.full_like(normalized_target, np.nan, dtype=np.float64)
+        valid_differential = (
+            target_mask
+            & available_comparison
+            & np.isfinite(comparison_reference)
+            & (comparison_reference > 0)
+        )
+        differential_flux[valid_differential] = (
+            normalized_target[valid_differential] / comparison_reference[valid_differential]
+        )
+        comparison_median_flux = float(
+            np.nanmedian(total_comparison_flux[available_comparison])
+        ) if available_comparison.any() else 0.0
     else:
-        differential_flux = normalized_target
+        differential_flux = normalized_target.copy()
         comparison_median_flux = 0.0
 
-    finite_mask &= np.isfinite(differential_flux) & (differential_flux > 0)
+    finite_mask = np.isfinite(differential_flux) & (differential_flux > 0)
     if not finite_mask.any():
         raise ValueError("No valid cadences remained after comparison-star normalization.")
 
-    times = dataset.times[finite_mask]
+    times = times_filtered[finite_mask]
     normalized_flux = differential_flux[finite_mask]
     normalized_flux /= np.nanmedian(normalized_flux)
 
+    emit(0.95, "Building normalized light curve.")
     scatter = float(np.nanstd(normalized_flux))
-    point_error = max(scatter, 0.0005)
+    light_curve = _build_light_curve_response(
+        req.target_id,
+        target.get("period_days"),
+        times,
+        normalized_flux,
+        y_label="Normalized Flux",
+    )
 
-    points = [
-        LightCurvePoint(
-            hjd=round(float(time_value), 6),
-            phase=None,
-            magnitude=round(float(flux_value), 6),
-            mag_error=round(point_error, 6),
+    normalized_total_weight = sum(item["raw_weight"] for item in diagnostic_payloads)
+    comparison_diagnostics = [
+        TransitComparisonDiagnostic(
+            label=item["label"],
+            position=item["position"],
+            aperture_radius=item["aperture_radius"],
+            inner_annulus=item["inner_annulus"],
+            outer_annulus=item["outer_annulus"],
+            valid_frame_count=item["valid_frame_count"],
+            median_flux=item["median_flux"],
+            differential_rms=item["differential_rms"],
+            differential_mad=item["differential_mad"],
+            ensemble_weight=round(
+                item["raw_weight"] / normalized_total_weight if normalized_total_weight > 0 else 0.0,
+                4,
+            ),
+            light_curve=item["light_curve"],
         )
-        for time_value, flux_value in zip(times, normalized_flux, strict=False)
+        for item in diagnostic_payloads
     ]
 
-    return TransitPhotometryResponse(
+    response = TransitPhotometryResponse(
         target_id=req.target_id,
         observation_id=req.observation_id,
         sector=dataset.sector,
-        frame_count=len(points),
-        comparison_count=len(valid_comparison_fluxes) if comparison_fluxes else 0,
-        target_position=req.target_position,
-        comparison_positions=req.comparison_positions[:3],
-        target_median_flux=round(float(np.nanmedian(target_flux[finite_mask])), 2),
+        frame_count=len(times),
+        comparison_count=len(comparison_diagnostics),
+        target_position=target_aperture.position,
+        comparison_positions=[diagnostic.position for diagnostic in comparison_diagnostics],
+        target_median_flux=round(target_median_flux, 2),
         comparison_median_flux=round(comparison_median_flux, 2),
-        light_curve=LightCurveResponse(
-            target_id=req.target_id,
-            period_days=target.get("period_days"),
-            points=points,
-            x_label="BTJD",
-            y_label="Normalized Flux",
-        ),
+        comparison_diagnostics=comparison_diagnostics,
+        light_curve=light_curve,
     )
+    emit(1.0, "Transit photometry complete.")
+    return response
+
+
+def run_transit_photometry_streaming(
+    req: TransitPhotometryRequest,
+) -> Any:
+    progress_queue: Queue[dict[str, Any]] = Queue()
+    result_holder: dict[str, TransitPhotometryResponse] = {}
+    error_holder: dict[str, str] = {}
+
+    def worker() -> None:
+        try:
+            result_holder["result"] = run_transit_photometry(
+                req,
+                progress_callback=lambda progress, message: progress_queue.put(
+                    {
+                        "type": "progress",
+                        "pct": float(np.clip(progress, 0.0, 1.0)),
+                        "message": message,
+                    }
+                ),
+            )
+        except Exception as error:  # pragma: no cover - surfaced to client
+            error_holder["message"] = str(error)
+
+    thread = Thread(target=worker, daemon=True)
+    thread.start()
+
+    while thread.is_alive() or not progress_queue.empty():
+        try:
+            yield progress_queue.get(timeout=0.2)
+        except Empty:
+            continue
+
+    if "message" in error_holder:
+        yield {"type": "error", "message": error_holder["message"]}
+        return
+
+    result = result_holder.get("result")
+    if result is None:
+        yield {"type": "error", "message": "Transit photometry returned no result."}
+        return
+
+    yield {"type": "result", "data": result}
 
 
 def _require_target(target_id: str) -> dict:
@@ -325,6 +756,144 @@ def _require_observation(target_id: str, observation_id: str) -> dict:
     if not observation:
         raise ValueError("Transit observation not found.")
     return observation
+
+
+def _resolve_photometry_target(req: TransitPhotometryRequest) -> dict[str, Any]:
+    if req.target_context is not None:
+        return {
+            "id": req.target_id,
+            "ra": float(req.target_context.ra),
+            "dec": float(req.target_context.dec),
+            "period_days": req.target_context.period_days,
+        }
+    return _require_target(req.target_id)
+
+
+def _resolve_photometry_observation(req: TransitPhotometryRequest) -> dict[str, Any]:
+    if req.observation_context is not None:
+        return {
+            "id": req.observation_id,
+            "sector": int(req.observation_context.sector),
+            "camera": req.observation_context.camera,
+            "ccd": req.observation_context.ccd,
+            "cutout_url": "",
+        }
+    return _require_observation(req.target_id, req.observation_id)
+
+
+def _resolve_aperture_requests(
+    req: TransitPhotometryRequest,
+    dataset: CutoutDataset,
+) -> tuple[_ResolvedAperture, list[_ResolvedAperture]]:
+    target_source = req.target_aperture or TransitApertureConfig(
+        position=req.target_position,
+        aperture_radius=req.aperture_radius,
+        inner_annulus=req.inner_annulus,
+        outer_annulus=req.outer_annulus,
+    )
+    comparison_sources = req.comparison_apertures[:3] or [
+        TransitApertureConfig(
+            position=position,
+            aperture_radius=req.aperture_radius,
+            inner_annulus=req.inner_annulus,
+            outer_annulus=req.outer_annulus,
+        )
+        for position in req.comparison_positions[:3]
+    ]
+
+    return (
+        _normalize_aperture_config(target_source, dataset),
+        [_normalize_aperture_config(source, dataset) for source in comparison_sources],
+    )
+
+
+def _normalize_aperture_config(
+    source: TransitApertureConfig,
+    dataset: CutoutDataset,
+) -> _ResolvedAperture:
+    aperture_radius = float(np.clip(source.aperture_radius, 1.0, 6.0))
+    inner_annulus = float(np.clip(source.inner_annulus, aperture_radius + 0.5, 7.0))
+    outer_annulus = float(
+        np.clip(
+            source.outer_annulus,
+            inner_annulus + 0.5,
+            min(dataset.flux_cube.shape[1:]) / 1.8,
+        )
+    )
+    return _ResolvedAperture(
+        position=source.position,
+        aperture_radius=aperture_radius,
+        inner_annulus=inner_annulus,
+        outer_annulus=outer_annulus,
+    )
+
+
+def _robust_mad(values: np.ndarray) -> float:
+    finite_values = np.asarray(values, dtype=np.float64)
+    finite_values = finite_values[np.isfinite(finite_values)]
+    if finite_values.size == 0:
+        return 0.0
+    median = np.nanmedian(finite_values)
+    return float(np.nanmedian(np.abs(finite_values - median)))
+
+
+def _build_light_curve_response(
+    target_id: str,
+    period_days: float | None,
+    times: np.ndarray,
+    fluxes: np.ndarray,
+    *,
+    y_label: str,
+    max_points: int | None = None,
+) -> LightCurveResponse:
+    sampled_times = np.asarray(times, dtype=np.float64)
+    sampled_fluxes = np.asarray(fluxes, dtype=np.float64)
+    if max_points is not None and sampled_times.size > max_points:
+        sample_indices = np.linspace(0, sampled_times.size - 1, max_points, dtype=int)
+        sampled_times = sampled_times[sample_indices]
+        sampled_fluxes = sampled_fluxes[sample_indices]
+
+    point_error = max(_estimate_light_curve_point_error(sampled_fluxes), 0.0005)
+    points = [
+        LightCurvePoint(
+            hjd=round(float(time_value), 6),
+            phase=None,
+            magnitude=round(float(flux_value), 6),
+            mag_error=round(point_error, 6),
+        )
+        for time_value, flux_value in zip(sampled_times, sampled_fluxes, strict=False)
+    ]
+    return LightCurveResponse(
+        target_id=target_id,
+        period_days=period_days,
+        points=points,
+        x_label="BTJD",
+        y_label=y_label,
+    )
+
+
+def _estimate_light_curve_point_error(fluxes: np.ndarray) -> float:
+    finite_fluxes = np.asarray(fluxes, dtype=np.float64)
+    finite_fluxes = finite_fluxes[np.isfinite(finite_fluxes)]
+    if finite_fluxes.size < 3:
+        return float(np.nanstd(finite_fluxes)) if finite_fluxes.size > 0 else 0.0005
+
+    diffs = np.diff(finite_fluxes)
+    diffs = diffs[np.isfinite(diffs)]
+    if diffs.size < 2:
+        scatter = _robust_mad(finite_fluxes)
+        return float(max(scatter * 1.4826, 0.0005))
+
+    # First differences suppress the transit shape itself and better capture
+    # cadence-to-cadence white noise than the global light-curve scatter.
+    diff_scatter = _robust_mad(diffs) * 1.4826 / np.sqrt(2.0)
+    if np.isfinite(diff_scatter) and diff_scatter > 0:
+        return float(diff_scatter)
+
+    scatter = _robust_mad(finite_fluxes) * 1.4826
+    if np.isfinite(scatter) and scatter > 0:
+        return float(scatter)
+    return float(max(np.nanstd(finite_fluxes), 0.0005))
 
 
 def _load_cutout_dataset(
@@ -342,11 +911,17 @@ def _load_cutout_dataset(
     cache_key = (target_id, observation_id, sector, size_px)
 
     with _cutout_cache_lock:
+        _prune_hot_cutout_cache()
         cached = _cutout_cache.get(cache_key)
         if cached is not None:
             _cutout_cache.move_to_end(cache_key)
             _notify_progress(progress_callback, 0.4, "Using cached TESS cutout.")
             return cached
+        hot_entry = _hot_cutout_cache.get(cache_key)
+        if hot_entry is not None:
+            _hot_cutout_cache.move_to_end(cache_key)
+            _notify_progress(progress_callback, 0.4, "Reusing recently loaded TESS cutout.")
+            return hot_entry[1]
 
     _notify_progress(
         progress_callback,
@@ -404,13 +979,18 @@ def _load_cutout_dataset(
         pixels = hdul["PIXELS"].data
         flux_cube = np.asarray(pixels["FLUX"], dtype=np.float32)
         times = np.asarray(pixels["TIME"], dtype=np.float64)
+        aperture_header = hdul["APERTURE"].header
         target_position = _resolve_target_position(
-            hdul["APERTURE"].header,
+            aperture_header,
             ra,
             dec,
             flux_cube.shape[2],
             flux_cube.shape[1],
         )
+        try:
+            wcs_obj = WCS(aperture_header)
+        except Exception:
+            wcs_obj = None
         column_names = set(getattr(pixels, "names", []) or [])
         cadence_numbers = (
             np.asarray(pixels["CADENCENO"], dtype=np.int64)
@@ -436,6 +1016,7 @@ def _load_cutout_dataset(
         target_position=target_position,
         cadence_numbers=cadence_numbers,
         quality_flags=quality_flags,
+        wcs=wcs_obj,
     )
     _store_cutout_dataset(cache_key, dataset)
     return dataset
@@ -447,11 +1028,18 @@ def _store_cutout_dataset(
 ) -> None:
     dataset_bytes = _dataset_nbytes(dataset)
 
-    # If a single dataset is larger than the budget, do not retain it.
-    if dataset_bytes > _CUTOUT_CACHE_MAX_BYTES:
-        return
-
     with _cutout_cache_lock:
+        _prune_hot_cutout_cache()
+        _hot_cutout_cache.pop(cache_key, None)
+
+        # Keep the most recent oversized cutout in memory so preview -> photometry
+        # can reuse it without forcing another TESSCut download.
+        if dataset_bytes > _CUTOUT_CACHE_MAX_BYTES:
+            _hot_cutout_cache[cache_key] = (time.time(), dataset)
+            while len(_hot_cutout_cache) > _HOT_CUTOUT_CACHE_MAX_ITEMS:
+                _hot_cutout_cache.popitem(last=False)
+            return
+
         existing = _cutout_cache.pop(cache_key, None)
         current_bytes = _cache_nbytes()
 
@@ -470,6 +1058,17 @@ def _store_cutout_dataset(
 
 def _cache_nbytes() -> int:
     return sum(_dataset_nbytes(dataset) for dataset in _cutout_cache.values())
+
+
+def _prune_hot_cutout_cache() -> None:
+    now = time.time()
+    expired = [
+        cache_key
+        for cache_key, (created_at, _) in _hot_cutout_cache.items()
+        if now - created_at > _HOT_CUTOUT_CACHE_TTL_SECONDS
+    ]
+    for cache_key in expired:
+        _hot_cutout_cache.pop(cache_key, None)
 
 
 def _dataset_nbytes(dataset: CutoutDataset) -> int:

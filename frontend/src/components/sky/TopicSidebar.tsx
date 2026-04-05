@@ -1,14 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchTopics } from '../../api/client';
-import { useAppStore } from '../../stores/useAppStore';
+import { DEFAULT_TRANSIT_FILTERS, useAppStore } from '../../stores/useAppStore';
 import type { Topic, TransitTargetFilters } from '../../types/target';
-
-const DEFAULT_TRANSIT_FILTERS: TransitTargetFilters = {
-  maxTargets: 20,
-  minDepthPct: 1.0,
-  maxPeriodDays: 5.0,
-  maxHostVmag: 13.0,
-};
 
 const TOPIC_CODES: Record<string, string> = {
   eclipsing_binary: 'EB',

@@ -27,6 +27,9 @@ export interface Target {
   description: string;
   topic_id: string;
   data_source?: string | null;
+  stellar_temperature?: number | null;
+  stellar_logg?: number | null;
+  stellar_metallicity?: number | null;
 }
 
 export interface Observation {
@@ -45,4 +48,5 @@ export interface Observation {
   display_label?: string | null;
   display_subtitle?: string | null;
   cutout_url?: string | null;
+  frame_count?: number | null;
 }

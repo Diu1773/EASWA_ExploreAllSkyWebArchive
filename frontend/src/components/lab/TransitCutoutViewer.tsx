@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
-import type { PixelCoordinate, StarOverlay, TransitCutoutPreview } from '../../types/transit';
+import type { PixelCoordinate, StarOverlay, TICStarInfo, TransitCutoutPreview } from '../../types/transit';
 
 interface TransitCutoutViewerProps {
   preview: TransitCutoutPreview;
   displayCutoutSizePx?: number;
   stars: StarOverlay[];
+  showTicMarkers?: boolean;
+  onToggleTicMarkers?: () => void;
   activeFrameIndex?: number | null;
   onFrameChange?: (frameIndex: number) => void;
   frameChangeDisabled?: boolean;
@@ -21,6 +23,8 @@ export function TransitCutoutViewer({
   preview,
   displayCutoutSizePx,
   stars,
+  showTicMarkers = false,
+  onToggleTicMarkers,
   activeFrameIndex,
   onFrameChange,
   frameChangeDisabled = false,
@@ -232,6 +236,16 @@ export function TransitCutoutViewer({
         )}
 
         <div className="transit-cutout-zoom">
+          {(preview.tic_stars?.length ?? 0) > 0 && onToggleTicMarkers && (
+            <button
+              type="button"
+              className={`btn-sm ${showTicMarkers ? 'active' : ''}`}
+              onClick={onToggleTicMarkers}
+              title="Toggle TIC star markers"
+            >
+              TIC
+            </button>
+          )}
           <button
             type="button"
             className="btn-sm"
@@ -284,6 +298,9 @@ export function TransitCutoutViewer({
                 viewBox={`0 0 ${preview.cutout_width_px} ${preview.cutout_height_px}`}
                 preserveAspectRatio="none"
               >
+                {showTicMarkers && preview.tic_stars?.map((tic) => (
+                  <TICMarker key={tic.tic_id} star={tic} />
+                ))}
                 {stars.map((star) => (
                   <SourceOverlay key={star.label} star={star} />
                 ))}
@@ -379,6 +396,19 @@ function SourceOverlay({ star }: { star: StarOverlay }) {
       <text x={position.x + aperture.outerAnnulus + 0.35} y={position.y - 0.35}>
         {label}
       </text>
+    </g>
+  );
+}
+
+function TICMarker({ star }: { star: TICStarInfo }) {
+  const { pixel, recommended } = star;
+  const r = 0.35;
+  return (
+    <g className={`transit-tic-marker ${recommended ? 'recommended' : ''}`}>
+      <circle cx={pixel.x} cy={pixel.y} r={r} />
+      {recommended && (
+        <circle cx={pixel.x} cy={pixel.y} r={1.2} className="transit-tic-ring" />
+      )}
     </g>
   );
 }

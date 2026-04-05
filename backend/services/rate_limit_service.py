@@ -7,6 +7,7 @@ from threading import Lock
 from fastapi import HTTPException, Request
 
 from config import (
+    RECORD_SUBMISSION_LIMIT,
     TRANSIT_PHOTOMETRY_LIMIT,
     TRANSIT_PREVIEW_INLINE_LIMIT,
     TRANSIT_PREVIEW_JOB_LIMIT,
@@ -19,6 +20,10 @@ _rate_limit_configs = {
     "transit_preview_inline": TRANSIT_PREVIEW_INLINE_LIMIT,
     "transit_preview_job": TRANSIT_PREVIEW_JOB_LIMIT,
     "transit_photometry": TRANSIT_PHOTOMETRY_LIMIT,
+    "record_submission": RECORD_SUBMISSION_LIMIT,
+}
+_rate_limit_messages = {
+    "record_submission": "Too many record submissions. Wait a moment and try again.",
 }
 
 
@@ -39,9 +44,9 @@ def enforce_rate_limit(request: Request, scope: str) -> None:
         if len(bucket) >= limit:
             raise HTTPException(
                 status_code=429,
-                detail=(
-                    "Too many transit processing requests. "
-                    "Wait a moment and try again."
+                detail=_rate_limit_messages.get(
+                    scope,
+                    "Too many transit processing requests. Wait a moment and try again.",
                 ),
                 headers={"Retry-After": str(TRANSIT_RATE_LIMIT_WINDOW_SECONDS)},
             )

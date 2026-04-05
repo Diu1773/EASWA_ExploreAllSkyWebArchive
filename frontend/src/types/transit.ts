@@ -11,12 +11,28 @@ export interface ApertureParams {
   outerAnnulus: number;
 }
 
+export interface TransitApertureConfig {
+  position: PixelCoordinate;
+  aperture_radius: number;
+  inner_annulus: number;
+  outer_annulus: number;
+}
+
 export interface StarOverlay {
   label: string;
   position: PixelCoordinate;
   aperture: ApertureParams;
   type: 'target' | 'comparison';
   selected: boolean;
+}
+
+export interface TICStarInfo {
+  tic_id: string;
+  pixel: PixelCoordinate;
+  tmag: number | null;
+  distance_arcmin: number | null;
+  is_variable: boolean;
+  recommended: boolean;
 }
 
 export interface TransitCutoutPreview {
@@ -39,6 +55,7 @@ export interface TransitCutoutPreview {
   frame_metadata?: TransitFrameMetadata | null;
   target_position: PixelCoordinate;
   image_data_url: string;
+  tic_stars?: TICStarInfo[];
 }
 
 export interface TransitFrameMetadata {
@@ -58,11 +75,37 @@ export interface TransitPhotometryRequest {
   target_id: string;
   observation_id: string;
   cutout_size_px: number;
+  target_context?: {
+    ra: number;
+    dec: number;
+    period_days: number | null;
+  };
+  observation_context?: {
+    sector: number;
+    camera: number | null;
+    ccd: number | null;
+  };
   target_position: PixelCoordinate;
   comparison_positions: PixelCoordinate[];
   aperture_radius: number;
   inner_annulus: number;
   outer_annulus: number;
+  target_aperture?: TransitApertureConfig;
+  comparison_apertures?: TransitApertureConfig[];
+}
+
+export interface TransitComparisonDiagnostic {
+  label: string;
+  position: PixelCoordinate;
+  aperture_radius: number;
+  inner_annulus: number;
+  outer_annulus: number;
+  valid_frame_count: number;
+  median_flux: number;
+  differential_rms: number;
+  differential_mad: number;
+  ensemble_weight: number;
+  light_curve: LightCurveResponse;
 }
 
 export interface TransitPhotometryResponse {
@@ -75,6 +118,7 @@ export interface TransitPhotometryResponse {
   comparison_positions: PixelCoordinate[];
   target_median_flux: number;
   comparison_median_flux: number;
+  comparison_diagnostics: TransitComparisonDiagnostic[];
   light_curve: LightCurveResponse;
 }
 

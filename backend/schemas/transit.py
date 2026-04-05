@@ -8,6 +8,13 @@ class PixelCoordinate(BaseModel):
     y: float
 
 
+class TransitApertureConfig(BaseModel):
+    position: PixelCoordinate
+    aperture_radius: float = 2.5
+    inner_annulus: float = 4.0
+    outer_annulus: float = 6.0
+
+
 class TransitFrameMetadata(BaseModel):
     frame_index: int | None = None
     btjd: float | None = None
@@ -19,6 +26,15 @@ class TransitFrameMetadata(BaseModel):
     flux_min: float | None = None
     flux_median: float | None = None
     flux_max: float | None = None
+
+
+class TICStarInfo(BaseModel):
+    tic_id: str
+    pixel: PixelCoordinate
+    tmag: float | None = None
+    distance_arcmin: float | None = None
+    is_variable: bool = False
+    recommended: bool = False
 
 
 class TransitCutoutPreviewResponse(BaseModel):
@@ -41,17 +57,48 @@ class TransitCutoutPreviewResponse(BaseModel):
     frame_metadata: TransitFrameMetadata | None = None
     target_position: PixelCoordinate
     image_data_url: str
+    tic_stars: list[TICStarInfo] = Field(default_factory=list)
+
+
+class TransitTargetContext(BaseModel):
+    ra: float
+    dec: float
+    period_days: float | None = None
+
+
+class TransitObservationContext(BaseModel):
+    sector: int
+    camera: int | None = None
+    ccd: int | None = None
 
 
 class TransitPhotometryRequest(BaseModel):
     target_id: str
     observation_id: str
     cutout_size_px: int = 35
+    target_context: TransitTargetContext | None = None
+    observation_context: TransitObservationContext | None = None
     target_position: PixelCoordinate
     comparison_positions: list[PixelCoordinate] = Field(default_factory=list)
     aperture_radius: float = 2.5
     inner_annulus: float = 4.0
     outer_annulus: float = 6.0
+    target_aperture: TransitApertureConfig | None = None
+    comparison_apertures: list[TransitApertureConfig] = Field(default_factory=list)
+
+
+class TransitComparisonDiagnostic(BaseModel):
+    label: str
+    position: PixelCoordinate
+    aperture_radius: float
+    inner_annulus: float
+    outer_annulus: float
+    valid_frame_count: int
+    median_flux: float
+    differential_rms: float
+    differential_mad: float
+    ensemble_weight: float
+    light_curve: LightCurveResponse
 
 
 class TransitPhotometryResponse(BaseModel):
@@ -64,6 +111,7 @@ class TransitPhotometryResponse(BaseModel):
     comparison_positions: list[PixelCoordinate]
     target_median_flux: float
     comparison_median_flux: float
+    comparison_diagnostics: list[TransitComparisonDiagnostic] = Field(default_factory=list)
     light_curve: LightCurveResponse
 
 

@@ -1347,6 +1347,71 @@ body {
   flex: 1;
 }
 
+.transit-comparison-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.transit-comparison-diagnostic-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  padding: 12px;
+  text-align: left;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.2s, background 0.2s;
+}
+
+.transit-comparison-diagnostic-card:hover {
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+  transform: translateY(-1px);
+}
+
+.transit-comparison-diagnostic-card.active {
+  border-color: rgba(108, 211, 255, 0.55);
+  background: rgba(108, 211, 255, 0.08);
+}
+
+.transit-comparison-diagnostic-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.transit-comparison-diagnostic-head strong {
+  color: var(--text-heading);
+  font-family: var(--font-heading);
+  font-size: 14px;
+}
+
+.transit-comparison-diagnostic-head span {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.transit-comparison-diagnostic-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.transit-comparison-diagnostic-grid span:nth-child(odd) {
+  color: var(--text-muted);
+}
+
+.transit-comparison-diagnostic-grid span:nth-child(even) {
+  color: var(--text-heading);
+}
+
 .param-row {
   margin-bottom: 12px;
 }
@@ -2120,6 +2185,51 @@ body {
   fill: rgba(255, 100, 100, 1);
 }
 
+/* TIC star markers */
+.transit-tic-marker circle {
+  fill: rgba(255, 60, 60, 0.85);
+  stroke: none;
+}
+.transit-tic-marker.recommended circle {
+  fill: rgba(80, 220, 120, 0.9);
+}
+.transit-tic-ring {
+  fill: none;
+  stroke: rgba(80, 220, 120, 0.6);
+  stroke-width: 0.15;
+  stroke-dasharray: 0.4 0.3;
+}
+
+/* TIC panel in sidebar */
+.transit-tic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.transit-star-row.tic-recommended {
+  border-left: 2px solid var(--success);
+}
+.transit-star-badge.tic {
+  background: rgba(80, 220, 120, 0.15);
+  color: var(--success);
+  font-size: 9px;
+}
+.transit-star-badge.tic.variable {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--danger);
+}
+.transit-tic-others {
+  margin-top: 4px;
+}
+.transit-tic-others summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 0;
+}
+
 .transit-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -2171,6 +2281,29 @@ body {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.transit-field-size-select {
+  padding: 6px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  min-width: 140px;
+}
+
+.transit-field-size-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.transit-field-size-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .transit-field-size-button {
@@ -2282,6 +2415,18 @@ body {
   width: auto;
   min-width: 120px;
   margin-top: 0;
+}
+
+.transit-toggle-row {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.transit-toggle-row .btn-sm.active {
+  border-color: rgba(232, 114, 42, 0.6);
+  background: rgba(232, 114, 42, 0.14);
+  color: var(--accent);
 }
 
 .record-form-shell {

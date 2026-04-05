@@ -14,7 +14,7 @@ def list_targets(
         raw = transit_archive.list_targets(
             topic_id,
             limit=max_targets or 20,
-            min_depth_pct=min_depth_pct or 1.0,
+            min_depth_pct=min_depth_pct or 5.0,
             max_period_days=max_period_days or 5.0,
             max_host_vmag=max_host_vmag or 13.0,
         )

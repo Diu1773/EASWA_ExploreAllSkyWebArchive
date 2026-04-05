@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 
 def _parse_bool(name: str, default: bool) -> bool:
@@ -28,13 +29,35 @@ def _parse_int(name: str, default: int) -> int:
         return default
 
 
-DEBUG = _parse_bool("EASWA_DEBUG", True)
+DEBUG = _parse_bool("EASWA_DEBUG", False)
 
 # Google OAuth
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-SESSION_SECRET = os.getenv("EASWA_SESSION_SECRET", "easwa-dev-secret-change-me")
 BASE_URL = os.getenv("EASWA_BASE_URL", "http://localhost:5895")
+_parsed_base_url = urlparse(BASE_URL)
+_is_local_base_url = _parsed_base_url.hostname in {"localhost", "127.0.0.1"}
+
+_session_secret = os.getenv("EASWA_SESSION_SECRET", "").strip()
+if _session_secret:
+    SESSION_SECRET = _session_secret
+elif DEBUG or _is_local_base_url:
+    SESSION_SECRET = "easwa-dev-secret-change-me"
+else:
+    raise RuntimeError(
+        "EASWA_SESSION_SECRET must be set when EASWA_DEBUG is disabled."
+    )
+
+SESSION_COOKIE_SECURE = _parse_bool(
+    "EASWA_SESSION_COOKIE_SECURE",
+    _parsed_base_url.scheme == "https",
+)
+SESSION_COOKIE_SAMESITE = os.getenv(
+    "EASWA_SESSION_COOKIE_SAMESITE",
+    "lax",
+).strip().lower()
+if SESSION_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    SESSION_COOKIE_SAMESITE = "lax"
 CORS_ORIGINS = _parse_csv(
     "EASWA_CORS_ORIGINS",
     [
@@ -56,3 +79,9 @@ TRANSIT_PREVIEW_JOB_TTL_SECONDS = _parse_int(
     "EASWA_TRANSIT_PREVIEW_JOB_TTL_SECONDS",
     15 * 60,
 )
+RECORD_REQUIRE_LOGIN = _parse_bool("EASWA_RECORD_REQUIRE_LOGIN", True)
+RECORD_SUBMISSION_LIMIT = _parse_int("EASWA_RECORD_SUBMISSION_LIMIT", 10)
+RECORD_MAX_CONTEXT_BYTES = _parse_int("EASWA_RECORD_MAX_CONTEXT_BYTES", 32 * 1024)
+RECORD_MAX_ANSWERS_BYTES = _parse_int("EASWA_RECORD_MAX_ANSWERS_BYTES", 32 * 1024)
+RECORD_MAX_TITLE_LENGTH = _parse_int("EASWA_RECORD_MAX_TITLE_LENGTH", 160)
+RECORD_MAX_OBSERVATION_IDS = _parse_int("EASWA_RECORD_MAX_OBSERVATION_IDS", 8)

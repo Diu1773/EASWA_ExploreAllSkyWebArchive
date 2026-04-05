@@ -13,6 +13,9 @@ class Target(BaseModel):
     description: str
     topic_id: str
     data_source: str | None = None
+    stellar_temperature: float | None = None
+    stellar_logg: float | None = None
+    stellar_metallicity: float | None = None
 
 
 class TargetListResponse(BaseModel):

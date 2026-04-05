@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchMyRecordSubmissions } from '../../api/client';
+import {
+  deleteMyRecordSubmission,
+  downloadMyRecordPhotometryCsv,
+  fetchMyRecordSubmissions,
+} from '../../api/client';
 import { useAuthStore } from '../../stores/useAuthStore';
 import type { RecordListItem } from '../../types/record';
 
@@ -8,6 +12,10 @@ export function MyAnalyses() {
   const user = useAuthStore((s) => s.user);
   const [records, setRecords] = useState<RecordListItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeAction, setActiveAction] = useState<{
+    recordId: number;
+    type: 'download' | 'delete';
+  } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,6 +41,50 @@ export function MyAnalyses() {
       cancelled = true;
     };
   }, [user]);
+
+  const handleDownloadCsv = async (recordId: number) => {
+    setErrorMessage(null);
+    setActiveAction({ recordId, type: 'download' });
+    try {
+      await downloadMyRecordPhotometryCsv(recordId);
+    } catch (error) {
+      console.error('Failed to download saved photometry CSV', error);
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to download saved photometry CSV.'
+      );
+    } finally {
+      setActiveAction((current) =>
+        current?.recordId === recordId && current.type === 'download' ? null : current
+      );
+    }
+  };
+
+  const handleDeleteRecord = async (record: RecordListItem) => {
+    const shouldDelete = window.confirm(
+      `Delete record #${record.submission_id}?\n\n${record.title}\n\nThis cannot be undone.`
+    );
+    if (!shouldDelete) return;
+
+    setErrorMessage(null);
+    setActiveAction({ recordId: record.submission_id, type: 'delete' });
+    try {
+      await deleteMyRecordSubmission(record.submission_id);
+      setRecords((current) =>
+        current.filter((item) => item.submission_id !== record.submission_id)
+      );
+    } catch (error) {
+      console.error('Failed to delete saved record', error);
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Failed to delete saved record.'
+      );
+    } finally {
+      setActiveAction((current) =>
+        current?.recordId === record.submission_id && current.type === 'delete'
+          ? null
+          : current
+      );
+    }
+  };
 
   if (!user) {
     return (
@@ -85,6 +137,12 @@ export function MyAnalyses() {
                 confidence_score?: number;
               };
             };
+            const isDownloading =
+              activeAction?.recordId === record.submission_id &&
+              activeAction.type === 'download';
+            const isDeleting =
+              activeAction?.recordId === record.submission_id &&
+              activeAction.type === 'delete';
             return (
               <article key={record.submission_id} className="analysis-record-card">
                 <div className="analysis-record-head">
@@ -118,11 +176,27 @@ export function MyAnalyses() {
                 </div>
                 <div className="analysis-record-actions">
                   <Link to={`/lab/${record.target_id}?record=${record.submission_id}`} className="btn-sm">
-                    Reopen Lab
+                    Restore Setup
                   </Link>
                   <Link to={`/target/${record.target_id}`} className="btn-sm">
                     View Target
                   </Link>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    disabled={isDownloading || isDeleting}
+                    onClick={() => handleDownloadCsv(record.submission_id)}
+                  >
+                    {isDownloading ? 'Downloading...' : 'Download CSV'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    disabled={isDownloading || isDeleting}
+                    onClick={() => handleDeleteRecord(record)}
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete'}
+                  </button>
                 </div>
               </article>
             );

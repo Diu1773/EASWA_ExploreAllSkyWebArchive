@@ -46,6 +46,7 @@ export function ObservationTable({ observations }: ObservationTableProps) {
               <th>Camera</th>
               <th>CCD</th>
               <th>Band</th>
+              <th>Frames</th>
               <th>Cutout</th>
             </tr>
           ) : (
@@ -78,6 +79,11 @@ export function ObservationTable({ observations }: ObservationTableProps) {
                   <td>{obs.camera ?? '-'}</td>
                   <td>{obs.ccd ?? '-'}</td>
                   <td>{obs.filter_band}</td>
+                  <td>
+                    {obs.frame_count !== null && obs.frame_count !== undefined
+                      ? obs.frame_count.toLocaleString()
+                      : 'n/a'}
+                  </td>
                   <td>
                     {obs.cutout_url ? (
                       <a

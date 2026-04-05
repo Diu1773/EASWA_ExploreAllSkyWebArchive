@@ -5,7 +5,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-from config import CORS_ORIGINS, DEBUG, SESSION_SECRET
+from config import (
+    CORS_ORIGINS,
+    DEBUG,
+    SESSION_COOKIE_SAMESITE,
+    SESSION_COOKIE_SECURE,
+    SESSION_SECRET,
+)
 from routers import topics, targets, observations, photometry, lightcurve, transit, auth, records
 
 app = FastAPI(title="EASWA API", version="0.1.0")
@@ -17,7 +23,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    same_site=SESSION_COOKIE_SAMESITE,
+    https_only=SESSION_COOKIE_SECURE,
+)
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(topics.router, prefix="/api")

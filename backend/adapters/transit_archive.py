@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 import logging
-from pathlib import Path
 import re
 from typing import Any
 from urllib.error import URLError
@@ -15,13 +14,12 @@ from urllib.request import urlopen
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
-_DATA_DIR = Path(__file__).parent.parent / "dummy_data"
 _EXOPLANET_ARCHIVE_TAP_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 _TESSCUT_SECTOR_URL = "https://mast.stsci.edu/tesscut/api/v0.1/sector"
 _TESSCUT_ASTROCUT_URL = "https://mast.stsci.edu/tesscut/api/v0.1/astrocut"
 _DEFAULT_CUTOUT_SIZE_PX = 35
 _DEFAULT_MAX_TARGETS = 20
-_DEFAULT_MIN_DEPTH_PCT = 1.0
+_DEFAULT_MIN_DEPTH_PCT = 5.0
 _DEFAULT_MAX_PERIOD_DAYS = 5.0
 _DEFAULT_MAX_HOST_VMAG = 13.0
 
@@ -32,13 +30,7 @@ class TransitArchive:
     """Transit target registry with lightweight TESS sector lookup."""
 
     def __init__(self) -> None:
-        with open(_DATA_DIR / "transit_targets.json", encoding="utf-8") as f:
-            self._fallback_targets: list[dict[str, Any]] = json.load(f)
-        for target in self._fallback_targets:
-            target.setdefault("data_source", "curated_fallback")
-        self._targets_by_id: dict[str, dict[str, Any]] = {
-            target["id"]: target for target in self._fallback_targets
-        }
+        self._targets_by_id: dict[str, dict[str, Any]] = {}
 
     def list_targets(
         self,
@@ -59,13 +51,11 @@ class TransitArchive:
                 max(6.0, float(max_host_vmag)),
             )
         except (OSError, URLError, json.JSONDecodeError) as error:
-            logger.warning("Transit target live query failed, using fallback list: %s", error)
-            live_targets = []
-        if live_targets:
-            self._targets_by_id.update({target["id"]: target for target in live_targets})
-            return live_targets
+            logger.warning("Transit target live query failed: %s", error)
+            return []
 
-        return self._fallback_targets[: max(1, min(len(self._fallback_targets), int(limit)))]
+        self._targets_by_id.update({target["id"]: target for target in live_targets})
+        return live_targets
 
     def get_target(self, target_id: str) -> dict[str, Any] | None:
         target = self._targets_by_id.get(target_id)
@@ -73,10 +63,21 @@ class TransitArchive:
             return target
 
         try:
-            broad_targets = _live_target_catalog(100, 0.1, 30.0, 16.0)
+            exact_target = _live_target_by_id(target_id)
+        except (OSError, URLError, json.JSONDecodeError) as error:
+            logger.warning("Transit target exact live query failed: %s", error)
+            return None
+
+        if exact_target:
+            self._targets_by_id[target_id] = exact_target
+            return exact_target
+
+        try:
+            broad_targets = _live_target_catalog(250, 0.1, 30.0, 16.0)
         except (OSError, URLError, json.JSONDecodeError) as error:
             logger.warning("Transit target broad live query failed: %s", error)
-            broad_targets = []
+            return None
+
         if broad_targets:
             self._targets_by_id.update({item["id"]: item for item in broad_targets})
         return self._targets_by_id.get(target_id)
@@ -89,7 +90,6 @@ class TransitArchive:
             target_id,
             target["ra"],
             target["dec"],
-            json.dumps(target.get("fallback_sectors", []), sort_keys=True),
         )
 
     def get_observation(
@@ -147,7 +147,15 @@ def _build_live_target(row: dict[str, Any]) -> dict[str, Any]:
         "description": description,
         "topic_id": "exoplanet_transit",
         "data_source": "nasa_exoplanet_archive",
-        "fallback_sectors": [],
+        "stellar_temperature": (
+            float(row["st_teff"]) if row.get("st_teff") is not None else None
+        ),
+        "stellar_logg": (
+            float(row["st_logg"]) if row.get("st_logg") is not None else None
+        ),
+        "stellar_metallicity": (
+            float(row["st_met"]) if row.get("st_met") is not None else None
+        ),
     }
 
 
@@ -160,7 +168,8 @@ def _live_target_catalog(
 ) -> list[dict[str, Any]]:
     query = f"""
         select top {limit}
-            pl_name, ra, dec, pl_orbper, sy_vmag, pl_trandep, pl_trandur
+            pl_name, ra, dec, pl_orbper, sy_vmag, pl_trandep, pl_trandur,
+            st_teff, st_logg, st_met
         from pscomppars
         where tran_flag = 1
             and sy_tmag is not null
@@ -182,25 +191,75 @@ def _live_target_catalog(
     return [_build_live_target(row) for row in rows]
 
 
-def _fallback_results(serialized_fallback: str) -> list[dict[str, str]]:
-    fallback = json.loads(serialized_fallback)
-    return [
-        {
-            "sector": f"{item['sector']:04d}",
-            "camera": str(item["camera"]),
-            "ccd": str(item["ccd"]),
-            "sectorName": f"tess-s{item['sector']:04d}-{item['camera']}-{item['ccd']}",
-        }
-        for item in fallback
-    ]
+def _candidate_target_names(target_id: str) -> list[str]:
+    tokens = [token for token in target_id.split("_") if token]
+    if len(tokens) < 2:
+        return [target_id.replace("_", " ")]
 
+    suffix = tokens[-1]
+    stem = tokens[:-1]
+    candidates: list[str] = []
+
+    def add_candidate(parts: list[str]) -> None:
+        value = " ".join(part for part in parts if part).strip().lower()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    add_candidate([*stem, suffix])
+
+    if len(stem) >= 2 and stem[1].isdigit():
+        add_candidate([f"{stem[0]}-{stem[1]}", *stem[2:], suffix])
+
+    if len(stem) >= 3 and stem[0].isalpha() and stem[1].isalpha() and stem[2].isdigit():
+        add_candidate([f"{stem[0]}-{stem[1]}-{stem[2]}", *stem[3:], suffix])
+
+    if len(stem) >= 3:
+        for index in range(1, len(stem) - 1):
+            if stem[index].isdigit() and stem[index + 1].isdigit():
+                add_candidate([*stem[:index], f"{stem[index]}-{stem[index + 1]}", *stem[index + 2:], suffix])
+
+    return candidates
+
+
+@lru_cache(maxsize=512)
+def _live_target_by_id(target_id: str) -> dict[str, Any] | None:
+    candidates = _candidate_target_names(target_id)
+    escaped_candidates = [candidate.replace("'", "''") for candidate in candidates]
+    clauses = " or ".join(
+        f"lower(pl_name) = '{candidate}'"
+        for candidate in escaped_candidates
+    )
+    query = f"""
+        select top 20
+            pl_name, ra, dec, pl_orbper, sy_vmag, pl_trandep, pl_trandur,
+            st_teff, st_logg, st_met
+        from pscomppars
+        where tran_flag = 1
+            and sy_tmag is not null
+            and ra is not null
+            and dec is not null
+            and pl_orbper is not null
+            and sy_vmag is not null
+            and pl_trandep is not null
+            and ({clauses})
+        order by sy_vmag asc, pl_name asc
+    """
+    url = f"{_EXOPLANET_ARCHIVE_TAP_URL}?query={quote(query)}&format=json"
+
+    with urlopen(url, timeout=20) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+
+    targets = [_build_live_target(row) for row in rows]
+    for target in targets:
+        if target["id"] == target_id:
+            return target
+    return targets[0] if targets else None
 
 @lru_cache(maxsize=64)
 def _sector_observations(
     target_id: str,
     ra: float,
     dec: float,
-    serialized_fallback: str,
 ) -> list[dict[str, Any]]:
     query = urlencode({"ra": f"{ra:.6f}", "dec": f"{dec:.6f}"})
     url = f"{_TESSCUT_SECTOR_URL}?{query}"
@@ -210,7 +269,7 @@ def _sector_observations(
             payload = json.loads(response.read().decode("utf-8"))
             results = payload.get("results", [])
     except (OSError, URLError, json.JSONDecodeError):
-        results = _fallback_results(serialized_fallback)
+        results = []
 
     observations: list[dict[str, Any]] = []
     for item in results:

@@ -17,6 +17,7 @@ class Observation(BaseModel):
     display_label: str | None = None
     display_subtitle: str | None = None
     cutout_url: str | None = None
+    frame_count: int | None = None
 
 
 class ObservationListResponse(BaseModel):

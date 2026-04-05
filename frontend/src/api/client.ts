@@ -53,6 +53,16 @@ async function post<T>(path: string, body: unknown, init?: RequestInit): Promise
   return res.json();
 }
 
+async function del(path: string, init?: RequestInit): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'DELETE',
+    ...init,
+  });
+  if (!res.ok) {
+    throw new Error(await buildApiErrorMessage(res, `DELETE ${path} failed`));
+  }
+}
+
 async function buildApiErrorMessage(
   response: Response,
   fallback: string
@@ -149,11 +159,115 @@ export async function runTransitPhotometry(
   return post('/transit/photometry', req, { signal });
 }
 
+export interface TransitPhotometryProgressEvent {
+  type: 'progress';
+  pct: number;
+  message: string;
+}
+
+export async function runTransitPhotometryStreaming(
+  req: TransitPhotometryRequest,
+  onProgress: (event: TransitPhotometryProgressEvent) => void,
+  signal?: AbortSignal
+): Promise<TransitPhotometryResponse> {
+  const res = await fetch(`${BASE}/transit/photometry-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(await buildApiErrorMessage(res, 'POST /transit/photometry-stream failed'));
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: TransitPhotometryResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop()!;
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      if (event.type === 'progress') {
+        onProgress(event as TransitPhotometryProgressEvent);
+      } else if (event.type === 'result') {
+        result = event.data as TransitPhotometryResponse;
+      } else if (event.type === 'error') {
+        throw new Error(event.message);
+      }
+    }
+  }
+
+  if (!result) throw new Error('No result received from photometry stream');
+  return result;
+}
+
 export async function fitTransitModel(
   req: TransitFitRequest,
   signal?: AbortSignal
 ): Promise<TransitFitResponse> {
   return post('/transit/fit', req, { signal });
+}
+
+export interface FitProgressEvent {
+  type: 'progress';
+  stage: string;
+  pct: number;
+  step?: number;
+  total?: number;
+}
+
+export async function fitTransitModelStreaming(
+  req: TransitFitRequest,
+  onProgress: (event: FitProgressEvent) => void,
+  signal?: AbortSignal
+): Promise<TransitFitResponse> {
+  const res = await fetch(`${BASE}/transit/fit-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(await buildApiErrorMessage(res, 'POST /transit/fit-stream failed'));
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: TransitFitResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop()!;
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      if (event.type === 'progress') {
+        onProgress(event as FitProgressEvent);
+      } else if (event.type === 'result') {
+        result = event.data as TransitFitResponse;
+      } else if (event.type === 'error') {
+        throw new Error(event.message);
+      }
+    }
+  }
+
+  if (!result) throw new Error('No result received from fit stream');
+  return result;
 }
 
 export async function createTransitPreviewJob(
@@ -220,4 +334,39 @@ export async function fetchMyRecordSubmissions(): Promise<RecordListItem[]> {
 export async function fetchMyRecordSubmission(recordId: number): Promise<RecordListItem | null> {
   const data = await get<{ records: RecordListItem[] }>(`/records/mine/${recordId}`);
   return data.records[0] ?? null;
+}
+
+export async function deleteMyRecordSubmission(recordId: number): Promise<void> {
+  await del(`/records/mine/${recordId}`);
+}
+
+export async function downloadMyRecordPhotometryCsv(recordId: number): Promise<void> {
+  const path = `/records/mine/${recordId}/photometry.csv`;
+  const res = await fetch(`${BASE}${path}`);
+  if (!res.ok) {
+    throw new Error(await buildApiErrorMessage(res, `GET ${path} failed`));
+  }
+
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const filename = extractFilename(
+    res.headers.get('Content-Disposition'),
+    `record_${recordId}_lightcurve.csv`
+  );
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function extractFilename(
+  contentDisposition: string | null,
+  fallback: string
+): string {
+  if (!contentDisposition) return fallback;
+  const match = /filename="([^"]+)"/i.exec(contentDisposition);
+  return match?.[1] ?? fallback;
 }

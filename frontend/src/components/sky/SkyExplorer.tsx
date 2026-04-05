@@ -102,6 +102,11 @@ export function SkyExplorer() {
           targets={targets}
           onTargetClick={handleTargetClick}
         />
+        {selectedTopic === 'exoplanet_transit' && targets.length === 0 && (
+          <div className="transit-empty-state">
+            No transit targets matched the current filters. Reset filters or lower Min Depth.
+          </div>
+        )}
         {popupTarget && (
           <TargetPopup
             gotoHint={gotoMessage}

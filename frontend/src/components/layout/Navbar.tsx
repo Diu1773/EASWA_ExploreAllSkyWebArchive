@@ -56,7 +56,7 @@ export function Navbar() {
         <LogoIcon />
         <div className="navbar-brand-copy">
           <span className="navbar-title">EASWA</span>
-          <span className="navbar-subtitle">All-Sky Archive Workbench</span>
+          <span className="navbar-subtitle">Exploring All-Sky Web Application</span>
         </div>
       </Link>
       <div className="navbar-links">

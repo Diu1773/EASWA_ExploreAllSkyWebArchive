@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
+from config import RECORD_REQUIRE_LOGIN
 from routers.auth import get_current_user
 from schemas.record import (
     RecordListResponse,
@@ -7,6 +8,7 @@ from schemas.record import (
     RecordSubmissionResponse,
     RecordTemplateResponse,
 )
+from services.rate_limit_service import enforce_rate_limit
 from services import record_service
 
 router = APIRouter(tags=["records"])
@@ -40,6 +42,42 @@ def get_my_record(record_id: int, request: Request):
     return RecordListResponse(records=[item])
 
 
+@router.get("/records/mine/{record_id}/photometry.csv")
+def download_my_record_photometry_csv(record_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not logged in.")
+    try:
+        filename, content = record_service.export_transit_record_csv_for_user(
+            record_id,
+            user["id"],
+        )
+    except ValueError as error:
+        detail = str(error)
+        status_code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=status_code, detail=detail) from error
+
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.delete("/records/mine/{record_id}", status_code=204)
+def delete_my_record(record_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not logged in.")
+    try:
+        record_service.delete_record_for_user(record_id, user["id"])
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return Response(status_code=204)
+
+
 @router.post(
     "/records/templates/{template_id}/submissions",
     response_model=RecordSubmissionResponse,
@@ -49,7 +87,10 @@ def submit_record_template(
     request: Request,
     payload: RecordSubmissionRequest,
 ):
+    enforce_rate_limit(request, "record_submission")
     user = get_current_user(request)
+    if RECORD_REQUIRE_LOGIN and not user:
+        raise HTTPException(status_code=401, detail="Login is required to submit analysis records.")
     try:
         return record_service.submit_record(
             template_id,

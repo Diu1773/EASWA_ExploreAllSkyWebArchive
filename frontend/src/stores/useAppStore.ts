@@ -2,6 +2,13 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { Target, TransitTargetFilters } from '../types/target';
 
+export const DEFAULT_TRANSIT_FILTERS: TransitTargetFilters = {
+  maxTargets: 20,
+  minDepthPct: 1.0,
+  maxPeriodDays: 5.0,
+  maxHostVmag: 13.0,
+};
+
 interface AppState {
   selectedTopic: string | null;
   setTopic: (topic: string | null) => void;
@@ -58,12 +65,7 @@ export const useAppStore = create<AppState>()(
       setInnerAnnulus: (r) => set({ innerAnnulus: r }),
       setOuterAnnulus: (r) => set({ outerAnnulus: r }),
 
-      transitFilters: {
-        maxTargets: 20,
-        minDepthPct: 1.0,
-        maxPeriodDays: 5.0,
-        maxHostVmag: 13.0,
-      },
+      transitFilters: { ...DEFAULT_TRANSIT_FILTERS },
       setTransitFilters: (patch) =>
         set((state) => ({
           transitFilters: {
@@ -74,12 +76,20 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'easwa-app-state',
+      version: 3,
       storage: createJSONStorage(() => sessionStorage),
       partialize: (state) => ({
-        selectedTopic: state.selectedTopic,
         selectedObservationIds: state.selectedObservationIds,
         transitFilters: state.transitFilters,
       }),
+      migrate: (persistedState) => {
+        const state = (persistedState as Partial<AppState> | undefined) ?? {};
+        return {
+          ...state,
+          selectedTopic: null,
+          transitFilters: { ...DEFAULT_TRANSIT_FILTERS },
+        } as AppState;
+      },
     }
   )
 );

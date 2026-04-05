@@ -1,5 +1,6 @@
 """EASWA — python run.py 하나로 서버 실행."""
 
+import importlib
 import os
 import socket
 import subprocess
@@ -22,6 +23,16 @@ if _env_file.exists():
             os.environ[key] = value
 DEFAULT_HOST = os.getenv("EASWA_HOST", "0.0.0.0")
 DEFAULT_PORT = int(os.getenv("EASWA_PORT", "5895"))
+_REQUIRED_BACKEND_MODULES = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn[standard]",
+    "numpy": "numpy",
+    "astropy": "astropy",
+    "PIL": "pillow",
+    "scipy": "scipy",
+    "batman": "batman-package",
+    "emcee": "emcee",
+}
 
 
 def _detect_lan_ip() -> str | None:
@@ -46,12 +57,23 @@ def _detect_lan_ip() -> str | None:
     return None
 
 
+def _find_missing_backend_modules() -> list[str]:
+    missing: list[str] = []
+    for module_name, package_name in _REQUIRED_BACKEND_MODULES.items():
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            missing.append(package_name)
+    return missing
+
+
 def main():
-    # pip install if needed
-    try:
-        import fastapi  # noqa: F401
-    except ImportError:
-        print("[EASWA] Installing backend dependencies ...")
+    missing_packages = _find_missing_backend_modules()
+    if missing_packages:
+        print(
+            "[EASWA] Installing missing backend dependencies: "
+            + ", ".join(sorted(set(missing_packages)))
+        )
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-r", str(BACKEND_DIR / "requirements.txt")],
             check=True,

@@ -233,7 +233,13 @@ function AladinViewer(
 
   return (
     <div className="aladin-shell">
-      <div ref={containerRef} className="aladin-container" />
+      <div
+        ref={containerRef}
+        className="aladin-container"
+        onContextMenu={(event) => {
+          event.preventDefault();
+        }}
+      />
       <div className="sky-center-reticle" aria-hidden="true">
         <span className="sky-center-reticle-h" />
         <span className="sky-center-reticle-v" />

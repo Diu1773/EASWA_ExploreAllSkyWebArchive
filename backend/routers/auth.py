@@ -7,7 +7,14 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
-from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET, BASE_URL
+from config import (
+    BASE_URL,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    SESSION_COOKIE_SAMESITE,
+    SESSION_COOKIE_SECURE,
+    SESSION_SECRET,
+)
 from db import upsert_user, get_user_by_id
 
 router = APIRouter(tags=["auth"])
@@ -35,8 +42,8 @@ def _set_session_cookie(response: JSONResponse | RedirectResponse, user_id: int)
         value=token,
         max_age=_SESSION_MAX_AGE,
         httponly=True,
-        samesite="lax",
-        secure=False,  # True in production with HTTPS
+        samesite=SESSION_COOKIE_SAMESITE,
+        secure=SESSION_COOKIE_SECURE,
     )
 
 
