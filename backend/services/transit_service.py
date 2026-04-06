@@ -552,6 +552,12 @@ def run_transit_photometry(
         observation_id=req.observation_id,
         size_px=normalized_size_px,
     )
+    if dataset is None:
+        dataset = _restore_recent_preview_dataset(
+            target_id=req.target_id,
+            observation_id=req.observation_id,
+            size_px=normalized_size_px,
+        )
     if dataset is not None:
         emit(0.12, "Reusing cutout already loaded in step 1.")
     else:
@@ -1291,6 +1297,27 @@ def _restore_preview_dataset_token(
         _preview_dataset_tokens.move_to_end(token)
         _preview_dataset_tokens[token] = (created_at, dataset)
         return dataset
+
+
+def _restore_recent_preview_dataset(
+    *,
+    target_id: str,
+    observation_id: str,
+    size_px: int,
+) -> CutoutDataset | None:
+    with _cutout_cache_lock:
+        _prune_preview_dataset_tokens()
+        for token in reversed(_preview_dataset_tokens):
+            created_at, dataset = _preview_dataset_tokens[token]
+            if (
+                dataset.target_id == target_id
+                and dataset.observation_id == observation_id
+                and dataset.size_px == size_px
+            ):
+                _preview_dataset_tokens.move_to_end(token)
+                _preview_dataset_tokens[token] = (created_at, dataset)
+                return dataset
+    return None
 
 
 def _prune_preview_dataset_tokens() -> None:
