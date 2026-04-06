@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import logging
+import shutil
 import tempfile
 import time
 import uuid
@@ -30,8 +31,12 @@ logger = logging.getLogger(__name__)
 
 from adapters.transit_archive import archive as transit_archive
 from config import (
+    TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS,
+    TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES,
+    TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS,
     TRANSIT_PREVIEW_JOB_MAX_ITEMS,
     TRANSIT_PREVIEW_JOB_TTL_SECONDS,
+    TRANSIT_PREVIEW_WORKERS,
 )
 from schemas.lightcurve import LightCurvePoint, LightCurveResponse
 from schemas.transit import (
@@ -53,9 +58,9 @@ _DEFAULT_CUTOUT_SIZE_PX = 35
 _FRAME_COUNT_LOOKUP_SIZE_PX = 1
 _ALLOWED_CUTOUT_SIZES_PX = (30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99)
 _PREVIEW_SIZE_PX = 456
-_CUTOUT_CACHE_MAX_ITEMS = 4
-_CUTOUT_CACHE_MAX_BYTES = 96 * 1024 * 1024
-_HOT_CUTOUT_CACHE_MAX_ITEMS = 1
+_CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS
+_CUTOUT_CACHE_MAX_BYTES = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES
+_HOT_CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS
 _HOT_CUTOUT_CACHE_TTL_SECONDS = 20 * 60
 _DISK_CUTOUT_CACHE_DIR = Path(tempfile.gettempdir()) / "easwa_tesscut_cache"
 _TIC_EDGE_MARGIN_PX = 6.0
@@ -75,7 +80,10 @@ _hot_cutout_cache: "OrderedDict[tuple[str, str, int, int], tuple[float, CutoutDa
 )
 _preview_job_lock = Lock()
 _preview_jobs: "OrderedDict[str, dict]" = OrderedDict()
-_preview_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tess-preview")
+_preview_executor = ThreadPoolExecutor(
+    max_workers=TRANSIT_PREVIEW_WORKERS,
+    thread_name_prefix="tess-preview",
+)
 
 
 class PreviewJobCancelled(Exception):
@@ -932,8 +940,7 @@ def _load_cutout_dataset(
     if cached_fits_path.exists():
         _notify_progress(progress_callback, 0.12, "Loading cached TESS cutout from local disk.")
         try:
-            fits_bytes = cached_fits_path.read_bytes()
-            dataset = _dataset_from_fits_bytes(
+            dataset = _dataset_from_fits_path(
                 target_id=target_id,
                 observation_id=observation_id,
                 sector=sector,
@@ -943,7 +950,7 @@ def _load_cutout_dataset(
                 cutout_url=cutout_url,
                 ra=ra,
                 dec=dec,
-                fits_bytes=fits_bytes,
+                fits_path=cached_fits_path,
                 progress_callback=progress_callback,
             )
             _store_cutout_dataset(cache_key, dataset)
@@ -974,54 +981,54 @@ def _load_cutout_dataset(
         method="POST",
     )
 
-    with urlopen(request, timeout=120) as response:
-        content_length = response.headers.get("Content-Length")
-        total_bytes = int(content_length) if content_length and content_length.isdigit() else 0
-        bytes_read = 0
-        buffer = io.BytesIO()
-
-        while True:
-            chunk = response.read(1024 * 256)
-            if not chunk:
-                break
-            buffer.write(chunk)
-            bytes_read += len(chunk)
-            if total_bytes > 0:
-                fraction = bytes_read / total_bytes
-                _notify_progress(
-                    progress_callback,
-                    0.08 + 0.7 * fraction,
-                    f"Downloading TESS cutout ZIP ({fraction * 100:.0f}%).",
+    temp_zip_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as temp_zip_file:
+            temp_zip_path = Path(temp_zip_file.name)
+            with urlopen(request, timeout=120) as response:
+                content_length = response.headers.get("Content-Length")
+                total_bytes = (
+                    int(content_length) if content_length and content_length.isdigit() else 0
                 )
+                bytes_read = 0
 
-        zip_bytes = buffer.getvalue()
+                while True:
+                    chunk = response.read(1024 * 256)
+                    if not chunk:
+                        break
+                    temp_zip_file.write(chunk)
+                    bytes_read += len(chunk)
+                    if total_bytes > 0:
+                        fraction = bytes_read / total_bytes
+                        _notify_progress(
+                            progress_callback,
+                            0.08 + 0.7 * fraction,
+                            f"Downloading TESS cutout ZIP ({fraction * 100:.0f}%).",
+                        )
 
-    _notify_progress(progress_callback, 0.82, "Extracting FITS data from cutout ZIP.")
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive_file:
-        fits_name = next(
-            name for name in archive_file.namelist() if name.lower().endswith(".fits")
+        _notify_progress(progress_callback, 0.82, "Extracting FITS data from cutout ZIP.")
+        _extract_disk_cutout_cache(temp_zip_path, cached_fits_path)
+        dataset = _dataset_from_fits_path(
+            target_id=target_id,
+            observation_id=observation_id,
+            sector=sector,
+            camera=camera,
+            ccd=ccd,
+            size_px=size_px,
+            cutout_url=cutout_url,
+            ra=ra,
+            dec=dec,
+            fits_path=cached_fits_path,
+            progress_callback=progress_callback,
         )
-        fits_bytes = archive_file.read(fits_name)
-
-    _write_disk_cutout_cache(cache_key, fits_bytes)
-    dataset = _dataset_from_fits_bytes(
-        target_id=target_id,
-        observation_id=observation_id,
-        sector=sector,
-        camera=camera,
-        ccd=ccd,
-        size_px=size_px,
-        cutout_url=cutout_url,
-        ra=ra,
-        dec=dec,
-        fits_bytes=fits_bytes,
-        progress_callback=progress_callback,
-    )
-    _store_cutout_dataset(cache_key, dataset)
-    return dataset
+        _store_cutout_dataset(cache_key, dataset)
+        return dataset
+    finally:
+        if temp_zip_path is not None:
+            temp_zip_path.unlink(missing_ok=True)
 
 
-def _dataset_from_fits_bytes(
+def _dataset_from_fits_path(
     *,
     target_id: str,
     observation_id: str,
@@ -1032,11 +1039,11 @@ def _dataset_from_fits_bytes(
     cutout_url: str,
     ra: float,
     dec: float,
-    fits_bytes: bytes,
+    fits_path: Path,
     progress_callback: Callable[[float, str], None] | None = None,
 ) -> CutoutDataset:
     _notify_progress(progress_callback, 0.87, "Reading cadence cube from FITS file.")
-    with fits.open(io.BytesIO(fits_bytes), memmap=False) as hdul:
+    with fits.open(fits_path, memmap=False) as hdul:
         pixels = hdul["PIXELS"].data
         flux_cube = np.asarray(pixels["FLUX"], dtype=np.float32)
         times = np.asarray(pixels["TIME"], dtype=np.float64)
@@ -1087,14 +1094,30 @@ def _disk_cutout_cache_path(cache_key: tuple[str, str, int, int]) -> Path:
     return _DISK_CUTOUT_CACHE_DIR / filename
 
 
-def _write_disk_cutout_cache(cache_key: tuple[str, str, int, int], fits_bytes: bytes) -> None:
+def _extract_disk_cutout_cache(zip_path: Path, cache_path: Path) -> None:
     try:
         _DISK_CUTOUT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_path = _disk_cutout_cache_path(cache_key)
-        if not cache_path.exists():
-            cache_path.write_bytes(fits_bytes)
+        if cache_path.exists():
+            return
+
+        with zipfile.ZipFile(zip_path) as archive_file:
+            fits_name = next(
+                name for name in archive_file.namelist() if name.lower().endswith(".fits")
+            )
+            with archive_file.open(fits_name) as source, tempfile.NamedTemporaryFile(
+                dir=_DISK_CUTOUT_CACHE_DIR,
+                suffix=".fits",
+                delete=False,
+            ) as temp_fits_file:
+                temp_cache_path = Path(temp_fits_file.name)
+                shutil.copyfileobj(source, temp_fits_file)
+
+        try:
+            temp_cache_path.replace(cache_path)
+        except FileExistsError:
+            temp_cache_path.unlink(missing_ok=True)
     except OSError as error:
-        logger.warning("Failed to write disk-cached TESS cutout %s: %s", cache_key, error)
+        logger.warning("Failed to stage disk-cached TESS cutout %s: %s", cache_path, error)
 
 
 def _store_cutout_dataset(

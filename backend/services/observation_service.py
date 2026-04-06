@@ -2,10 +2,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from adapters.dummy_archive import archive as dummy_archive
 from adapters.transit_archive import archive as transit_archive
+from config import TRANSIT_FRAME_COUNT_WORKERS
 from schemas.observation import Observation, ObservationListResponse
 from services import transit_service
 
-_FRAME_COUNT_LOOKUP_WORKERS = 4
+_FRAME_COUNT_LOOKUP_WORKERS = TRANSIT_FRAME_COUNT_WORKERS
 
 
 def list_observations(target_id: str) -> ObservationListResponse:

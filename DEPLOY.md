@@ -46,6 +46,14 @@ If you use Google sign-in, register this callback URL in Google Cloud:
   Recommended when you attach a persistent disk on Render or another host.
   Without these, the app uses local paths under `backend/`.
 
+- `EASWA_TRANSIT_PREVIEW_WORKERS=1`
+- `EASWA_TRANSIT_FRAME_COUNT_WORKERS=1`
+- `EASWA_TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS=1`
+- `EASWA_TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES=16777216`
+- `EASWA_TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS=0`
+  Useful on Render free instances if the transit lab preview hits the 512 MB memory cap.
+  The current code already defaults to conservative values outside local development, but these let you tighten or relax them explicitly.
+
 - `EASWA_CORS_ORIGINS=https://your-public-domain`
   Only needed if you later split frontend and backend across different origins.
   With the current single-origin deployment, relative `/api` requests are simpler.

@@ -1,4 +1,5 @@
 import json
+from functools import lru_cache
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -12,9 +13,15 @@ from schemas.transit import (
 from schemas.transit_fit import TransitFitRequest, TransitFitResponse
 from services.rate_limit_service import enforce_rate_limit
 from services import transit_service
-from services import transit_fit_service
 
 router = APIRouter(tags=["transit"])
+
+
+@lru_cache(maxsize=1)
+def _get_transit_fit_service():
+    from services import transit_fit_service
+
+    return transit_fit_service
 
 
 @router.get(
@@ -135,6 +142,7 @@ def run_transit_photometry_stream(request: Request, req: TransitPhotometryReques
 )
 def fit_transit(request: Request, req: TransitFitRequest):
     enforce_rate_limit(request, "transit_fit")
+    transit_fit_service = _get_transit_fit_service()
     try:
         return transit_fit_service.fit_transit_model(
             points=req.points,
@@ -167,6 +175,7 @@ def fit_transit(request: Request, req: TransitFitRequest):
 def fit_transit_stream(request: Request, req: TransitFitRequest):
     """Streaming version: yields NDJSON lines with progress, then the result."""
     enforce_rate_limit(request, "transit_fit")
+    transit_fit_service = _get_transit_fit_service()
 
     def generate():
         try:
