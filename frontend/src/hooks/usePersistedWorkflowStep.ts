@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-interface PersistedWorkflowEnvelope<TStep extends string, TSnapshot> {
+export interface PersistedWorkflowEnvelope<TStep extends string, TSnapshot> {
   version: number;
   step: TStep;
   snapshot: TSnapshot;
 }
 
-interface UsePersistedWorkflowStepOptions<
+export interface UsePersistedWorkflowStepOptions<
   TStep extends string,
   TSnapshot,
   TAvailability,
@@ -47,6 +47,7 @@ export function usePersistedWorkflowStep<
   const [searchParams, setSearchParams] = useSearchParams();
   const [step, setStepState] = useState<TStep>(defaultStep);
   const [hydrated, setHydrated] = useState(false);
+  const [hasRestoredSnapshot, setHasRestoredSnapshot] = useState(false);
   const stepRef = useRef(defaultStep);
   const searchParamsRef = useRef(searchParams);
   const selfNavigationSearchRef = useRef<string | null>(null);
@@ -164,6 +165,7 @@ export function usePersistedWorkflowStep<
         : emptyAvailabilityRef.current
     );
 
+    setHasRestoredSnapshot(restoredSnapshot !== null);
     applyRestoredSnapshotRef.current(restoredSnapshot, restoredStep);
     stepRef.current = restoredStep;
     setStepState(restoredStep);
@@ -221,6 +223,7 @@ export function usePersistedWorkflowStep<
 
   const clearPersistedWorkflow = () => {
     sessionStorage.removeItem(storageKey);
+    setHasRestoredSnapshot(false);
   };
 
   const setStep = (requestedStep: TStep) => {
@@ -236,6 +239,7 @@ export function usePersistedWorkflowStep<
     setStep,
     replaceStep,
     hydrated,
+    hasRestoredSnapshot,
     clearPersistedWorkflow,
   };
 }

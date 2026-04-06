@@ -37,6 +37,7 @@ from schemas.transit import (
 from services import transit_service
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "survey_templates"
+_MAX_RESTORED_COMPARISON_SOURCES = 10
 
 
 def get_template(template_id: str) -> RecordTemplateResponse:
@@ -281,12 +282,12 @@ def _build_transit_photometry_request(record: dict[str, Any]) -> TransitPhotomet
         target_context=target_context,
         observation_context=observation_context,
         target_position=target_position,
-        comparison_positions=comparison_positions[:3],
+        comparison_positions=comparison_positions[:_MAX_RESTORED_COMPARISON_SOURCES],
         aperture_radius=float(aperture.get("apertureRadius", 2.5)),
         inner_annulus=float(aperture.get("innerAnnulus", 4.0)),
         outer_annulus=float(aperture.get("outerAnnulus", 6.0)),
         target_aperture=target_aperture,
-        comparison_apertures=comparison_apertures[:3],
+        comparison_apertures=comparison_apertures[:_MAX_RESTORED_COMPARISON_SOURCES],
     )
 
 

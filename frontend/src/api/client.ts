@@ -25,6 +25,8 @@ import type {
   RecordSubmissionRequest,
   RecordSubmissionResponse,
   RecordTemplate,
+  WorkflowDraftItem,
+  WorkflowDraftRequest,
 } from '../types/record';
 
 const BASE = '/api';
@@ -338,6 +340,44 @@ export async function fetchMyRecordSubmission(recordId: number): Promise<RecordL
 
 export async function deleteMyRecordSubmission(recordId: number): Promise<void> {
   await del(`/records/mine/${recordId}`);
+}
+
+export async function fetchMyWorkflowDrafts(): Promise<WorkflowDraftItem[]> {
+  const data = await get<{ drafts: WorkflowDraftItem[] }>('/drafts/mine');
+  return data.drafts;
+}
+
+export async function fetchMyWorkflowDraft(
+  draftId: string
+): Promise<WorkflowDraftItem | null> {
+  try {
+    return await get<WorkflowDraftItem>(`/drafts/mine/${encodeURIComponent(draftId)}`);
+  } catch (error) {
+    if (error instanceof Error && /404/.test(error.message)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function upsertMyWorkflowDraft(
+  draftId: string,
+  req: WorkflowDraftRequest
+): Promise<WorkflowDraftItem> {
+  return fetch(`${BASE}/drafts/mine/${encodeURIComponent(draftId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  }).then(async (res) => {
+    if (!res.ok) {
+      throw new Error(await buildApiErrorMessage(res, `PUT /drafts/mine/${draftId} failed`));
+    }
+    return res.json();
+  });
+}
+
+export async function deleteMyWorkflowDraft(draftId: string): Promise<void> {
+  await del(`/drafts/mine/${encodeURIComponent(draftId)}`);
 }
 
 export async function downloadMyRecordPhotometryCsv(recordId: number): Promise<void> {

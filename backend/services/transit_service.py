@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import logging
+import tempfile
 import time
 import uuid
 import zipfile
@@ -11,6 +12,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock, Thread
 from typing import Any, Callable
@@ -55,11 +57,14 @@ _CUTOUT_CACHE_MAX_ITEMS = 4
 _CUTOUT_CACHE_MAX_BYTES = 96 * 1024 * 1024
 _HOT_CUTOUT_CACHE_MAX_ITEMS = 1
 _HOT_CUTOUT_CACHE_TTL_SECONDS = 20 * 60
+_DISK_CUTOUT_CACHE_DIR = Path(tempfile.gettempdir()) / "easwa_tesscut_cache"
 _TIC_EDGE_MARGIN_PX = 6.0
 _TIC_MIN_LOCAL_COVERAGE = 0.85
 _TIC_MIN_SIGNAL_SIGMA = 3.0
 _TIC_DUPLICATE_TOLERANCE_PX = 0.75
 _TIC_TARGET_EXCLUSION_PX = 1.0
+_MAX_COMPARISON_SOURCES = 10
+_MAX_RECOMMENDED_TIC_STARS = _MAX_COMPARISON_SOURCES
 _MAX_COMPARISON_DIAGNOSTIC_POINTS = 1500
 
 
@@ -263,11 +268,11 @@ def _query_tic_stars(
         # Sort by brightness
         stars.sort(key=lambda s: s.tmag or 99)
 
-        # Limit count and mark top 3 non-variable as recommended
+        # Limit count and only keep the brightest N stars marked as recommended.
         stars = stars[:max_stars]
         rec_count = 0
         for star in stars:
-            if star.recommended and rec_count < 3:
+            if star.recommended and rec_count < _MAX_RECOMMENDED_TIC_STARS:
                 rec_count += 1
             elif star.recommended:
                 star.recommended = False
@@ -791,14 +796,14 @@ def _resolve_aperture_requests(
         inner_annulus=req.inner_annulus,
         outer_annulus=req.outer_annulus,
     )
-    comparison_sources = req.comparison_apertures[:3] or [
+    comparison_sources = req.comparison_apertures[:_MAX_COMPARISON_SOURCES] or [
         TransitApertureConfig(
             position=position,
             aperture_radius=req.aperture_radius,
             inner_annulus=req.inner_annulus,
             outer_annulus=req.outer_annulus,
         )
-        for position in req.comparison_positions[:3]
+        for position in req.comparison_positions[:_MAX_COMPARISON_SOURCES]
     ]
 
     return (
@@ -923,6 +928,30 @@ def _load_cutout_dataset(
             _notify_progress(progress_callback, 0.4, "Reusing recently loaded TESS cutout.")
             return hot_entry[1]
 
+    cached_fits_path = _disk_cutout_cache_path(cache_key)
+    if cached_fits_path.exists():
+        _notify_progress(progress_callback, 0.12, "Loading cached TESS cutout from local disk.")
+        try:
+            fits_bytes = cached_fits_path.read_bytes()
+            dataset = _dataset_from_fits_bytes(
+                target_id=target_id,
+                observation_id=observation_id,
+                sector=sector,
+                camera=camera,
+                ccd=ccd,
+                size_px=size_px,
+                cutout_url=cutout_url,
+                ra=ra,
+                dec=dec,
+                fits_bytes=fits_bytes,
+                progress_callback=progress_callback,
+            )
+            _store_cutout_dataset(cache_key, dataset)
+            return dataset
+        except Exception as error:
+            logger.warning("Failed to restore disk-cached TESS cutout %s: %s", cached_fits_path, error)
+            cached_fits_path.unlink(missing_ok=True)
+
     _notify_progress(
         progress_callback,
         0.05,
@@ -974,6 +1003,38 @@ def _load_cutout_dataset(
         )
         fits_bytes = archive_file.read(fits_name)
 
+    _write_disk_cutout_cache(cache_key, fits_bytes)
+    dataset = _dataset_from_fits_bytes(
+        target_id=target_id,
+        observation_id=observation_id,
+        sector=sector,
+        camera=camera,
+        ccd=ccd,
+        size_px=size_px,
+        cutout_url=cutout_url,
+        ra=ra,
+        dec=dec,
+        fits_bytes=fits_bytes,
+        progress_callback=progress_callback,
+    )
+    _store_cutout_dataset(cache_key, dataset)
+    return dataset
+
+
+def _dataset_from_fits_bytes(
+    *,
+    target_id: str,
+    observation_id: str,
+    sector: int,
+    camera: int | None,
+    ccd: int | None,
+    size_px: int,
+    cutout_url: str,
+    ra: float,
+    dec: float,
+    fits_bytes: bytes,
+    progress_callback: Callable[[float, str], None] | None = None,
+) -> CutoutDataset:
     _notify_progress(progress_callback, 0.87, "Reading cadence cube from FITS file.")
     with fits.open(io.BytesIO(fits_bytes), memmap=False) as hdul:
         pixels = hdul["PIXELS"].data
@@ -1003,7 +1064,7 @@ def _load_cutout_dataset(
             else None
         )
 
-    dataset = CutoutDataset(
+    return CutoutDataset(
         target_id=target_id,
         observation_id=observation_id,
         sector=sector,
@@ -1018,8 +1079,22 @@ def _load_cutout_dataset(
         quality_flags=quality_flags,
         wcs=wcs_obj,
     )
-    _store_cutout_dataset(cache_key, dataset)
-    return dataset
+
+
+def _disk_cutout_cache_path(cache_key: tuple[str, str, int, int]) -> Path:
+    target_id, observation_id, sector, size_px = cache_key
+    filename = f"{target_id}__{observation_id}__s{sector:04d}__{size_px}px.fits"
+    return _DISK_CUTOUT_CACHE_DIR / filename
+
+
+def _write_disk_cutout_cache(cache_key: tuple[str, str, int, int], fits_bytes: bytes) -> None:
+    try:
+        _DISK_CUTOUT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path = _disk_cutout_cache_path(cache_key)
+        if not cache_path.exists():
+            cache_path.write_bytes(fits_bytes)
+    except OSError as error:
+        logger.warning("Failed to write disk-cached TESS cutout %s: %s", cache_key, error)
 
 
 def _store_cutout_dataset(

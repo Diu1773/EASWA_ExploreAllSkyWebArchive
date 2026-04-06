@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 QuestionType = Literal["text", "textarea", "select", "radio", "checkbox", "number"]
+WorkflowDraftStatus = Literal["active", "archived"]
 
 
 class RecordQuestionOption(BaseModel):
@@ -63,3 +64,31 @@ class RecordListItemResponse(BaseModel):
 
 class RecordListResponse(BaseModel):
     records: list[RecordListItemResponse] = Field(default_factory=list)
+
+
+class WorkflowDraftRequest(BaseModel):
+    workflow: str
+    target_id: str
+    title: str | None = None
+    seed_record_id: int | None = None
+    status: WorkflowDraftStatus = "active"
+    workflow_version: int = 1
+    envelope: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowDraftResponse(BaseModel):
+    draft_id: str
+    workflow: str
+    target_id: str
+    title: str | None = None
+    seed_record_id: int | None = None
+    status: WorkflowDraftStatus = "active"
+    workflow_version: int = 1
+    envelope: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+    last_opened_at: str | None = None
+
+
+class WorkflowDraftListResponse(BaseModel):
+    drafts: list[WorkflowDraftResponse] = Field(default_factory=list)

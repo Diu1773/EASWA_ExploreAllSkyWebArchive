@@ -15,6 +15,7 @@ frontend/dist/
 .vscode/
 .idea/
 .claude/
+.codex/
 *.swp
 *.swo
 
@@ -24,7 +25,14 @@ Thumbs.db
 
 # Env
 .env
-.env.local
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
 
 # Runtime data
 backend/*.db

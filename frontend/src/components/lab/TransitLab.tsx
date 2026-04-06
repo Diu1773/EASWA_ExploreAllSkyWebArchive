@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   cancelTransitPreviewJob,
   createTransitPreviewJob,
@@ -7,9 +7,7 @@ import {
   fetchTransitPreviewJob,
   fetchRecordTemplate,
   fitTransitModelStreaming,
-  type FitProgressEvent,
   runTransitPhotometryStreaming,
-  type TransitPhotometryProgressEvent,
   submitRecordTemplate,
 } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
@@ -21,72 +19,63 @@ import type {
   StarOverlay,
   TransitApertureConfig,
   TransitComparisonDiagnostic,
-  TransitCutoutPreview,
   TransitPhotometryResponse,
 } from '../../types/transit';
-import type { RecordSubmissionResponse, RecordTemplate } from '../../types/record';
-import type { TransitFitParameters, TransitFitResponse } from '../../types/transitFit';
+import type { RecordTemplate } from '../../types/record';
 import { defaultTransitRecordTemplate } from '../../data/transitRecordTemplate';
-import { usePersistedWorkflowStep } from '../../hooks/usePersistedWorkflowStep';
+import { useWorkflowController } from '../../hooks/useWorkflowController';
+import type { WorkflowSessionSource } from '../../utils/workflowSession';
+import {
+  createTransitWorkflowDefinition,
+  normalizeTransitFitResponse,
+  type PersistedTransitLabState,
+  type TransitFitDataSource,
+  type TransitStepAvailability,
+  type TransitWorkflowStep,
+} from '../../workflows/transit/definition';
+import {
+  reduceTransitInvalidation,
+  type TransitInvalidationAction,
+} from '../../workflows/transit/invalidation';
+import {
+  buildBjdLightCurve,
+  buildFitOverlayCurve,
+  buildFitResidualCurve,
+  buildLightCurveFromFitResult,
+  buildPhaseFoldedLightCurve,
+  computeDefaultBjdWindow,
+  estimatePhaseFoldReferenceT0,
+} from '../../workflows/transit/lightCurve';
+import {
+  createInitialTransitLabState,
+  transitLabReducer,
+  type ComparisonStar,
+  type StarKey,
+  type TransitLabDefaults,
+  type TransitLabState,
+} from '../../workflows/transit/state';
 import { TransitCutoutViewer } from './TransitCutoutViewer';
 import { LightCurvePlot } from './LightCurvePlot';
 
 interface TransitLabProps {
   target: Target;
   observations: Observation[];
-  recordId?: number | null;
+  draftId?: string | null;
+  seedRecordId?: number | null;
 }
 
-type TransitStep = 'select' | 'run' | 'lightcurve' | 'transitfit' | 'record';
+type TransitStep = TransitWorkflowStep;
 type StepState = 'locked' | 'accessible' | 'completed';
-type FitDataSource = 'phase_fold' | 'bjd_window';
-type TransitLightCurve = TransitPhotometryResponse['light_curve'];
-
-interface LightCurveOverlay {
-  x: number[];
-  y: number[];
-  name?: string;
-  color?: string;
-  width?: number;
-}
-
-interface TransitFitDebugRequest {
-  fitMode: FitDataSource;
-  period: number;
-  t0: number;
-  filterName: string | null;
-  stellarTemperature: number | null;
-  stellarLogg: number | null;
-  stellarMetallicity: number | null;
-  bjdStart: number | null;
-  bjdEnd: number | null;
-  requestedFitWindowPhase: number;
-  baselineOrder: number;
-  sigmaClipSigma: number;
-  sigmaClipIterations: number;
-  roiPointCount: number;
-  roiTimeMin: number | null;
-  roiTimeMax: number | null;
-  roiFluxMin: number | null;
-  roiFluxMax: number | null;
-  roiErrorMin: number | null;
-  roiErrorMax: number | null;
-}
+type StateSetterArg<T> = T | ((prev: T) => T);
 
 const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
   { id: 'select', label: 'Select Stars', number: 1 },
   { id: 'run', label: 'Run Photometry', number: 2 },
-  { id: 'lightcurve', label: 'Light Curve', number: 3 },
-  { id: 'transitfit', label: 'Transit Fit', number: 4 },
-  { id: 'record', label: 'Record Result', number: 5 },
+  { id: 'comparisonqc', label: 'Comparison QC', number: 3 },
+  { id: 'lightcurve', label: 'Light Curve', number: 4 },
+  { id: 'transitfit', label: 'Transit Fit', number: 5 },
+  { id: 'record', label: 'Record Result', number: 6 },
 ];
-
-function parseTransitStep(value: string | null): TransitStep | null {
-  if (value === 'select' || value === 'run' || value === 'lightcurve' || value === 'transitfit' || value === 'record') {
-    return value;
-  }
-  return null;
-}
 
 const CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99] as const;
 
@@ -96,12 +85,7 @@ const DEFAULT_APERTURE: ApertureParams = {
   outerAnnulus: 6.0,
 };
 
-type StarKey = 'T' | 'C1' | 'C2' | 'C3';
-
-interface ComparisonStar {
-  position: PixelCoordinate;
-  aperture: ApertureParams;
-}
+const MAX_COMPARISON_STARS = 10;
 
 function arePixelPositionsNear(
   left: PixelCoordinate,
@@ -123,427 +107,6 @@ function toTransitApertureConfig(
   };
 }
 
-interface PersistedTransitLabState {
-  selectedObservationIds: string[];
-  activeObservationId: string | null;
-  cutoutSizePx: number | null;
-  selectedFrameIndex: number | null;
-  targetAperture: ApertureParams;
-  targetPositionOffset: PixelCoordinate | null;
-  comparisonStars: ComparisonStar[];
-  selectedStar: StarKey;
-  foldEnabled: boolean;
-  foldPeriod: number | null;
-  foldT0: number;
-  fitLimbDarkening: boolean;
-  fitDataSource: FitDataSource;
-  bjdWindowStart: number | null;
-  bjdWindowEnd: number | null;
-  fitWindowPhase: number;
-  fitBaselineOrder: number;
-  fitSigmaClipSigma: number;
-  fitSigmaClipIterations: number;
-  fitResult: TransitFitResponse | null;
-  result: TransitPhotometryResponse | null;
-  recordAnswers: Record<string, unknown>;
-  recordTitle: string;
-  recordSaved: RecordSubmissionResponse | null;
-}
-
-interface TransitStepAvailability {
-  hasPreviewState: boolean;
-  hasComparisonStars: boolean;
-  hasResult: boolean;
-}
-
-function normalizeFiniteNumber(value: unknown, fallback = 0): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
-function normalizeNumberArray(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is number => typeof item === 'number' && Number.isFinite(item));
-}
-
-function normalizePixelCoordinate(
-  value: unknown,
-  fallback: PixelCoordinate | null = null
-): PixelCoordinate | null {
-  if (!value || typeof value !== 'object') return fallback;
-  const candidate = value as Partial<PixelCoordinate>;
-  const x = normalizeFiniteNumber(candidate.x, Number.NaN);
-  const y = normalizeFiniteNumber(candidate.y, Number.NaN);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return fallback;
-  return { x, y };
-}
-
-function normalizeComparisonStars(value: unknown): ComparisonStar[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object') return [];
-    const candidate = item as Partial<ComparisonStar>;
-    const position = normalizePixelCoordinate(candidate.position);
-    if (!position) return [];
-    return [
-      {
-        position,
-        aperture: {
-          apertureRadius: normalizeFiniteNumber(
-            candidate.aperture?.apertureRadius,
-            DEFAULT_APERTURE.apertureRadius
-          ),
-          innerAnnulus: normalizeFiniteNumber(
-            candidate.aperture?.innerAnnulus,
-            DEFAULT_APERTURE.innerAnnulus
-          ),
-          outerAnnulus: normalizeFiniteNumber(
-            candidate.aperture?.outerAnnulus,
-            DEFAULT_APERTURE.outerAnnulus
-          ),
-        },
-      },
-    ];
-  });
-}
-
-function normalizeLightCurveResponse(
-  value: unknown,
-  fallbackTargetId: string,
-  fallbackPeriodDays: number | null | undefined
-): TransitPhotometryResponse['light_curve'] | null {
-  if (!value || typeof value !== 'object') return null;
-  const candidate = value as Partial<TransitPhotometryResponse['light_curve']>;
-  const points = Array.isArray(candidate.points)
-    ? candidate.points.flatMap((point) => {
-        if (!point || typeof point !== 'object') return [];
-        const item = point as Partial<TransitPhotometryResponse['light_curve']['points'][number]>;
-        const hjd = normalizeFiniteNumber(item.hjd, Number.NaN);
-        const magnitude = normalizeFiniteNumber(item.magnitude, Number.NaN);
-        if (!Number.isFinite(hjd) || !Number.isFinite(magnitude)) return [];
-        return [
-          {
-            hjd,
-            phase:
-              item.phase === null
-                ? null
-                : typeof item.phase === 'number' && Number.isFinite(item.phase)
-                  ? item.phase
-                  : null,
-            magnitude,
-            mag_error: normalizeFiniteNumber(item.mag_error, 0.0),
-          },
-        ];
-      })
-    : [];
-  if (points.length === 0) return null;
-  return {
-    target_id:
-      typeof candidate.target_id === 'string' && candidate.target_id.trim() !== ''
-        ? candidate.target_id
-        : fallbackTargetId,
-    period_days:
-      candidate.period_days === null
-        ? null
-        : typeof candidate.period_days === 'number' && Number.isFinite(candidate.period_days)
-          ? candidate.period_days
-          : fallbackPeriodDays ?? null,
-    points,
-    x_label: typeof candidate.x_label === 'string' ? candidate.x_label : 'BTJD',
-    y_label: typeof candidate.y_label === 'string' ? candidate.y_label : 'Normalized Flux',
-  };
-}
-
-function normalizeTransitComparisonDiagnostics(
-  value: unknown,
-  fallbackTargetId: string
-): TransitComparisonDiagnostic[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item, index) => {
-    if (!item || typeof item !== 'object') return [];
-    const candidate = item as Partial<TransitComparisonDiagnostic>;
-    const position = normalizePixelCoordinate(candidate.position);
-    const lightCurve = normalizeLightCurveResponse(candidate.light_curve, fallbackTargetId, null);
-    if (!position || !lightCurve) return [];
-    return [
-      {
-        label:
-          typeof candidate.label === 'string' && candidate.label.trim() !== ''
-            ? candidate.label
-            : `C${index + 1}`,
-        position,
-        aperture_radius: normalizeFiniteNumber(candidate.aperture_radius, 0),
-        inner_annulus: normalizeFiniteNumber(candidate.inner_annulus, 0),
-        outer_annulus: normalizeFiniteNumber(candidate.outer_annulus, 0),
-        valid_frame_count: normalizeFiniteNumber(candidate.valid_frame_count, 0),
-        median_flux: normalizeFiniteNumber(candidate.median_flux, 0),
-        differential_rms: normalizeFiniteNumber(candidate.differential_rms, 0),
-        differential_mad: normalizeFiniteNumber(candidate.differential_mad, 0),
-        ensemble_weight: normalizeFiniteNumber(candidate.ensemble_weight, 0),
-        light_curve: lightCurve,
-      },
-    ];
-  });
-}
-
-function normalizeTransitPhotometryResponse(
-  value: unknown,
-  fallbackTargetId: string,
-  fallbackPeriodDays: number | null | undefined
-): TransitPhotometryResponse | null {
-  if (!value || typeof value !== 'object') return null;
-  const candidate = value as Partial<TransitPhotometryResponse>;
-  const lightCurve = normalizeLightCurveResponse(
-    candidate.light_curve,
-    fallbackTargetId,
-    fallbackPeriodDays
-  );
-  if (!lightCurve) return null;
-  const comparisonDiagnostics = normalizeTransitComparisonDiagnostics(
-    candidate.comparison_diagnostics,
-    lightCurve.target_id
-  );
-  const targetPosition =
-    normalizePixelCoordinate(candidate.target_position) ?? { x: 0, y: 0 };
-  const comparisonPositions = Array.isArray(candidate.comparison_positions)
-    ? candidate.comparison_positions.flatMap((position) => {
-        const normalized = normalizePixelCoordinate(position);
-        return normalized ? [normalized] : [];
-      })
-    : comparisonDiagnostics.map((diagnostic) => diagnostic.position);
-
-  return {
-    target_id:
-      typeof candidate.target_id === 'string' && candidate.target_id.trim() !== ''
-        ? candidate.target_id
-        : lightCurve.target_id,
-    observation_id:
-      typeof candidate.observation_id === 'string' ? candidate.observation_id : '',
-    sector: normalizeFiniteNumber(candidate.sector, 0),
-    frame_count: normalizeFiniteNumber(candidate.frame_count, lightCurve.points.length),
-    comparison_count: normalizeFiniteNumber(
-      candidate.comparison_count,
-      comparisonDiagnostics.length
-    ),
-    target_position: targetPosition,
-    comparison_positions: comparisonPositions,
-    target_median_flux: normalizeFiniteNumber(candidate.target_median_flux, 0),
-    comparison_median_flux: normalizeFiniteNumber(candidate.comparison_median_flux, 0),
-    comparison_diagnostics: comparisonDiagnostics,
-    light_curve: lightCurve,
-  };
-}
-
-function normalizeTransitFitParameters(value: unknown): TransitFitParameters {
-  const candidate = value && typeof value === 'object' ? (value as Partial<TransitFitParameters>) : {};
-  return {
-    rp_rs: normalizeFiniteNumber(candidate.rp_rs, 0),
-    rp_rs_err: normalizeFiniteNumber(candidate.rp_rs_err, 0),
-    a_rs: normalizeFiniteNumber(candidate.a_rs, 0),
-    a_rs_err: normalizeFiniteNumber(candidate.a_rs_err, 0),
-    inclination: normalizeFiniteNumber(candidate.inclination, 0),
-    inclination_err: normalizeFiniteNumber(candidate.inclination_err, 0),
-    u1: normalizeFiniteNumber(candidate.u1, 0),
-    u1_err: normalizeFiniteNumber(candidate.u1_err, 0),
-    u2: normalizeFiniteNumber(candidate.u2, 0),
-    u2_err: normalizeFiniteNumber(candidate.u2_err, 0),
-    chi_squared: normalizeFiniteNumber(candidate.chi_squared, 0),
-    reduced_chi_squared: normalizeFiniteNumber(candidate.reduced_chi_squared, 0),
-    degrees_of_freedom: normalizeFiniteNumber(candidate.degrees_of_freedom, 0),
-  };
-}
-
-function normalizeTransitModelCurve(value: unknown): TransitFitResponse['model_curve'] {
-  const candidate = value && typeof value === 'object' ? (value as Partial<TransitFitResponse['model_curve']>) : {};
-  return {
-    phase: normalizeNumberArray(candidate.phase),
-    flux: normalizeNumberArray(candidate.flux),
-  };
-}
-
-function normalizeTransitFitResponse(value: unknown): TransitFitResponse | null {
-  if (!value || typeof value !== 'object') return null;
-  const candidate = value as Partial<TransitFitResponse>;
-  const normalizedReferenceT0 =
-    candidate.reference_t0 === null || candidate.reference_t0 === undefined
-      ? null
-      : normalizeFiniteNumber(candidate.reference_t0, Number.NaN);
-  if (!Number.isFinite(normalizedReferenceT0)) {
-    return null;
-  }
-  const referenceT0 = Number(normalizedReferenceT0);
-  const modelCurve = normalizeTransitModelCurve(candidate.model_curve);
-  const modelTime = normalizeNumberArray(candidate.model_time);
-  if (modelTime.length !== modelCurve.flux.length || modelTime.length === 0) {
-    return null;
-  }
-  const preprocessingCandidate =
-    candidate.preprocessing && typeof candidate.preprocessing === 'object'
-      ? candidate.preprocessing
-      : null;
-  const normalizedBjdStart =
-    preprocessingCandidate?.bjd_start === null || preprocessingCandidate?.bjd_start === undefined
-      ? null
-      : normalizeFiniteNumber(preprocessingCandidate.bjd_start, 0);
-  const normalizedBjdEnd =
-    preprocessingCandidate?.bjd_end === null || preprocessingCandidate?.bjd_end === undefined
-      ? null
-      : normalizeFiniteNumber(preprocessingCandidate.bjd_end, 0);
-  return {
-    target_id: typeof candidate.target_id === 'string' ? candidate.target_id : '',
-    period: normalizeFiniteNumber(candidate.period, 0),
-    t0: normalizeFiniteNumber(candidate.t0, 0),
-    reference_t0: referenceT0,
-    limb_darkening_source:
-      typeof candidate.limb_darkening_source === 'string'
-        ? candidate.limb_darkening_source
-        : null,
-    limb_darkening_filter:
-      typeof candidate.limb_darkening_filter === 'string'
-        ? candidate.limb_darkening_filter
-        : null,
-    used_batman: Boolean(candidate.used_batman),
-    used_mcmc: Boolean(candidate.used_mcmc),
-    preprocessing: {
-      fit_mode:
-        preprocessingCandidate?.fit_mode === 'phase_fold' ? 'phase_fold' : 'bjd_window',
-      fit_window_phase: normalizeFiniteNumber(preprocessingCandidate?.fit_window_phase, 0.12),
-      bjd_start: normalizedBjdStart,
-      bjd_end: normalizedBjdEnd,
-      limb_darkening_source:
-        typeof preprocessingCandidate?.limb_darkening_source === 'string'
-          ? preprocessingCandidate.limb_darkening_source
-          : null,
-      limb_darkening_filter:
-        typeof preprocessingCandidate?.limb_darkening_filter === 'string'
-          ? preprocessingCandidate.limb_darkening_filter
-          : null,
-      baseline_order: normalizeFiniteNumber(preprocessingCandidate?.baseline_order, 0),
-      sigma_clip_sigma: normalizeFiniteNumber(preprocessingCandidate?.sigma_clip_sigma, 0),
-      sigma_clip_iterations: normalizeFiniteNumber(
-        preprocessingCandidate?.sigma_clip_iterations,
-        0
-      ),
-      retained_points: normalizeFiniteNumber(preprocessingCandidate?.retained_points, 0),
-      clipped_points: normalizeFiniteNumber(preprocessingCandidate?.clipped_points, 0),
-    },
-    fitted_params: normalizeTransitFitParameters(candidate.fitted_params),
-    initial_params: normalizeTransitFitParameters(candidate.initial_params),
-    model_curve: modelCurve,
-    initial_curve: normalizeTransitModelCurve(candidate.initial_curve),
-    model_time: modelTime,
-    data_time: normalizeNumberArray(candidate.data_time),
-    data_phase: normalizeNumberArray(candidate.data_phase),
-    data_flux: normalizeNumberArray(candidate.data_flux),
-    data_error: normalizeNumberArray(candidate.data_error),
-    residuals: normalizeNumberArray(candidate.residuals),
-  };
-}
-
-function getTransitStepAvailability(
-  snapshot: Pick<
-    PersistedTransitLabState,
-    'activeObservationId' | 'cutoutSizePx' | 'comparisonStars' | 'result'
-  > | null
-): TransitStepAvailability {
-  return {
-    hasPreviewState:
-      snapshot?.activeObservationId !== null && snapshot?.cutoutSizePx !== null,
-    hasComparisonStars: (snapshot?.comparisonStars.length ?? 0) > 0,
-    hasResult: snapshot?.result !== null,
-  };
-}
-
-function normalizePersistedTransitLabState(
-  raw: unknown,
-  targetId: string,
-  targetPeriodDays: number | null | undefined
-): PersistedTransitLabState | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const candidate = raw as Partial<PersistedTransitLabState>;
-  return {
-    selectedObservationIds: Array.isArray(candidate.selectedObservationIds)
-      ? candidate.selectedObservationIds.filter(
-          (id): id is string => typeof id === 'string' && id.trim() !== ''
-        )
-      : typeof candidate.activeObservationId === 'string' && candidate.activeObservationId.trim() !== ''
-        ? [candidate.activeObservationId]
-        : [],
-    activeObservationId:
-      typeof candidate.activeObservationId === 'string' &&
-      candidate.activeObservationId.trim() !== ''
-        ? candidate.activeObservationId
-        : null,
-    cutoutSizePx:
-      typeof candidate.cutoutSizePx === 'number' && Number.isFinite(candidate.cutoutSizePx)
-        ? candidate.cutoutSizePx
-        : null,
-    selectedFrameIndex:
-      typeof candidate.selectedFrameIndex === 'number' &&
-      Number.isFinite(candidate.selectedFrameIndex)
-        ? candidate.selectedFrameIndex
-        : null,
-    targetAperture: {
-      apertureRadius: normalizeFiniteNumber(
-        candidate.targetAperture?.apertureRadius,
-        DEFAULT_APERTURE.apertureRadius
-      ),
-      innerAnnulus: normalizeFiniteNumber(
-        candidate.targetAperture?.innerAnnulus,
-        DEFAULT_APERTURE.innerAnnulus
-      ),
-      outerAnnulus: normalizeFiniteNumber(
-        candidate.targetAperture?.outerAnnulus,
-        DEFAULT_APERTURE.outerAnnulus
-      ),
-    },
-    targetPositionOffset: normalizePixelCoordinate(candidate.targetPositionOffset),
-    comparisonStars: normalizeComparisonStars(candidate.comparisonStars),
-    selectedStar:
-      candidate.selectedStar === 'C1' ||
-      candidate.selectedStar === 'C2' ||
-      candidate.selectedStar === 'C3'
-        ? candidate.selectedStar
-        : 'T',
-    foldEnabled: Boolean(candidate.foldEnabled),
-    foldPeriod:
-      typeof candidate.foldPeriod === 'number' && Number.isFinite(candidate.foldPeriod)
-        ? candidate.foldPeriod
-        : null,
-    foldT0: normalizeFiniteNumber(candidate.foldT0, 0),
-    fitLimbDarkening: Boolean(candidate.fitLimbDarkening),
-    fitDataSource:
-      candidate.fitDataSource === 'phase_fold' ? 'phase_fold' : 'bjd_window',
-    bjdWindowStart:
-      typeof candidate.bjdWindowStart === 'number' &&
-      Number.isFinite(candidate.bjdWindowStart)
-        ? candidate.bjdWindowStart
-        : null,
-    bjdWindowEnd:
-      typeof candidate.bjdWindowEnd === 'number' && Number.isFinite(candidate.bjdWindowEnd)
-        ? candidate.bjdWindowEnd
-        : null,
-    fitWindowPhase: normalizeFiniteNumber(candidate.fitWindowPhase, 0.12),
-    fitBaselineOrder: normalizeFiniteNumber(candidate.fitBaselineOrder, 0),
-    fitSigmaClipSigma: normalizeFiniteNumber(candidate.fitSigmaClipSigma, 0),
-    fitSigmaClipIterations: normalizeFiniteNumber(candidate.fitSigmaClipIterations, 0),
-    fitResult: normalizeTransitFitResponse(candidate.fitResult),
-    result: normalizeTransitPhotometryResponse(
-      candidate.result,
-      targetId,
-      targetPeriodDays
-    ),
-    recordAnswers:
-      candidate.recordAnswers && typeof candidate.recordAnswers === 'object'
-        ? (candidate.recordAnswers as Record<string, unknown>)
-        : {},
-    recordTitle: typeof candidate.recordTitle === 'string' ? candidate.recordTitle : '',
-    recordSaved:
-      candidate.recordSaved && typeof candidate.recordSaved === 'object'
-        ? (candidate.recordSaved as RecordSubmissionResponse)
-        : null,
-  };
-}
-
 function buildInitialRecordAnswers(template: RecordTemplate | null): Record<string, unknown> {
   if (!template) return {};
   return template.questions.reduce<Record<string, unknown>>((acc, question) => {
@@ -560,239 +123,284 @@ function isScoreQuestion(question: RecordTemplate['questions'][number]): boolean
   return question.type === 'number' && question.min_value === 1 && question.max_value === 5;
 }
 
-function getTransitLabStorageKey(targetId: string): string {
-  return `easwa-transit-lab:${targetId}`;
-}
-
-function computeDefaultBjdWindow(
-  points: TransitPhotometryResponse['light_curve']['points'],
-  periodDays: number | null | undefined
-): { start: number; end: number } | null {
-  if (!points || points.length === 0) return null;
-  const times = points.map((point) => point.hjd).filter((value) => Number.isFinite(value));
-  if (times.length === 0) return null;
-  const minTime = Math.min(...times);
-  const maxTime = Math.max(...times);
-  const span = maxTime - minTime;
-  if (!Number.isFinite(span) || span <= 0) return null;
-
-  const deepestPoint = [...points].sort((left, right) => left.magnitude - right.magnitude)[0];
-  const center = deepestPoint?.hjd ?? (minTime + maxTime) / 2;
-  const halfWidth = Math.min(
-    Math.max((periodDays && periodDays > 0 ? periodDays * 0.12 : span * 0.08), 0.08),
-    0.6,
-    span / 3,
-  );
-  return {
-    start: Math.max(minTime, center - halfWidth),
-    end: Math.min(maxTime, center + halfWidth),
-  };
-}
-
-function computeTransitPhase(time: number, period: number, t0: number): number {
-  return ((((time - t0) / period) % 1) + 1.5) % 1 - 0.5;
-}
-
-function buildBjdLightCurve(
-  points: TransitPhotometryResponse['light_curve']['points'],
-  targetId: string,
-  periodDays: number | null | undefined
-): TransitLightCurve | null {
-  if (points.length === 0) return null;
-  return {
-    target_id: targetId,
-    period_days: periodDays ?? null,
-    x_label: 'BTJD',
-    y_label: 'Normalized Flux',
-    points: points.map((point) => ({
-      ...point,
-      phase: null,
-    })),
-  };
-}
-
-function buildPhaseFoldedLightCurve(
-  points: TransitPhotometryResponse['light_curve']['points'],
-  targetId: string,
-  period: number,
-  t0: number,
-  phaseHalfWindow: number | null = null
-): TransitLightCurve | null {
-  if (!Number.isFinite(period) || period <= 0 || points.length === 0) return null;
-  return {
-    target_id: targetId,
-    period_days: period,
-    x_label: 'Phase',
-    y_label: 'Normalized Flux',
-    points: [...points]
-      .map((point) => ({
-        ...point,
-        phase: computeTransitPhase(point.hjd, period, t0),
-      }))
-      .filter(
-        (point) =>
-          phaseHalfWindow === null ||
-          phaseHalfWindow <= 0 ||
-          Math.abs(point.phase ?? 0) <= phaseHalfWindow
-      )
-      .sort((left, right) => (left.phase ?? 0) - (right.phase ?? 0)),
-  };
-}
-
-function buildLightCurveFromFitResult(
-  fitResult: TransitFitResponse,
-  fitDataSource: FitDataSource
-): TransitLightCurve | null {
-  const flux = fitResult.data_flux;
-  const error = fitResult.data_error;
-  if (flux.length === 0) return null;
-
-  if (fitDataSource === 'phase_fold') {
-    if (fitResult.data_phase.length !== flux.length) return null;
-    return {
-      target_id: fitResult.target_id,
-      period_days: fitResult.period,
-      x_label: 'Phase',
-      y_label: 'Normalized Flux',
-      points: fitResult.data_phase
-        .map((phase, index) => ({
-          hjd: fitResult.data_time[index] ?? index,
-          phase,
-          magnitude: flux[index],
-          mag_error: error[index] ?? 0.0005,
-        }))
-        .sort((left, right) => (left.phase ?? 0) - (right.phase ?? 0)),
-    };
-  }
-
-  if (fitResult.data_time.length !== flux.length) return null;
-  return {
-    target_id: fitResult.target_id,
-    period_days: fitResult.period,
-    x_label: 'BTJD',
-    y_label: 'Normalized Flux',
-    points: fitResult.data_time
-      .map((time, index) => ({
-        hjd: time,
-        phase: null,
-        magnitude: flux[index],
-        mag_error: error[index] ?? 0.0005,
-      }))
-      .sort((left, right) => left.hjd - right.hjd),
-  };
-}
-
-function buildFitOverlayCurve(
-  fitResult: TransitFitResponse,
-  fitDataSource: FitDataSource
-): LightCurveOverlay | null {
-  const xValues =
-    fitDataSource === 'phase_fold' ? fitResult.data_phase : fitResult.data_time;
-  if (
-    xValues.length <= 1 ||
-    xValues.length !== fitResult.data_flux.length ||
-    fitResult.data_flux.length !== fitResult.residuals.length
-  ) {
-    return null;
-  }
-
-  const points = xValues
-    .map((x, index) => ({
-      x,
-      y: fitResult.data_flux[index] - fitResult.residuals[index],
-    }))
-    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-    .sort((left, right) => left.x - right.x);
-
-  if (points.length <= 1) return null;
-
-  return {
-    x: points.map((point) => point.x),
-    y: points.map((point) => point.y),
-    name: 'Transit fit',
-  };
-}
-
-function clampTransitStep(
-  requestedStep: TransitStep,
-  options: {
-    hasPreviewState: boolean;
-    hasComparisonStars: boolean;
-    hasResult: boolean;
-  }
-): TransitStep {
-  if (requestedStep === 'record') {
-    return options.hasResult ? 'record' : clampTransitStep('transitfit', options);
-  }
-  if (requestedStep === 'transitfit') {
-    return options.hasResult ? 'transitfit' : clampTransitStep('lightcurve', options);
-  }
-  if (requestedStep === 'lightcurve') {
-    return options.hasResult ? 'lightcurve' : clampTransitStep('run', options);
-  }
-  if (requestedStep === 'run') {
-    return options.hasPreviewState && options.hasComparisonStars ? 'run' : 'select';
-  }
-  return 'select';
-}
-
-export function TransitLab({ target, observations, recordId = null }: TransitLabProps) {
-  const selectedIds = useAppStore((state) => state.selectedObservationIds);
-  const selectAllObservations = useAppStore((state) => state.selectAllObservations);
-  const user = useAuthStore((state) => state.user);
+export function TransitLab({
+  target,
+  observations,
+  draftId = null,
+  seedRecordId = null,
+}: TransitLabProps) {
+  const selectedIds = useAppStore((s) => s.selectedObservationIds);
+  const selectAllObservations = useAppStore((s) => s.selectAllObservations);
+  const user = useAuthStore((s) => s.user);
   const [observationSelectionHydrated, setObservationSelectionHydrated] = useState(() =>
     useAppStore.persist.hasHydrated()
   );
-
-  const [activeObservationId, setActiveObservationId] = useState<string | null>(null);
-  const [preview, setPreview] = useState<TransitCutoutPreview | null>(null);
-  const [cutoutSizePx, setCutoutSizePx] = useState<number | null>(null);
-  const [pendingCutoutSizePx, setPendingCutoutSizePx] = useState<number>(35);
-  const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [framePreviewLoading, setFramePreviewLoading] = useState(false);
-  const [previewProgress, setPreviewProgress] = useState(0);
-  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [runProgressEvent, setRunProgressEvent] = useState<TransitPhotometryProgressEvent | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [result, setResult] = useState<TransitPhotometryResponse | null>(null);
-  const [foldEnabled, setFoldEnabled] = useState(false);
-  const [foldPeriod, setFoldPeriod] = useState<number | null>(null);
-  const [foldT0, setFoldT0] = useState<number>(0);
-  const [fitResult, setFitResult] = useState<TransitFitResponse | null>(null);
-  const [fitting, setFitting] = useState(false);
-  const [fitProgress, setFitProgress] = useState<FitProgressEvent | null>(null);
-  const [fitDebugRequest, setFitDebugRequest] = useState<TransitFitDebugRequest | null>(null);
-  const [fitDebugLog, setFitDebugLog] = useState<string[]>([]);
-  const [showTicMarkers, setShowTicMarkers] = useState(false);
-  const [fitLimbDarkening, setFitLimbDarkening] = useState(false);
-  const [fitDataSource, setFitDataSource] = useState<FitDataSource>('bjd_window');
-  const [bjdWindowStart, setBjdWindowStart] = useState<number | null>(null);
-  const [bjdWindowEnd, setBjdWindowEnd] = useState<number | null>(null);
-  const [fitWindowPhase, setFitWindowPhase] = useState(0.12);
-  const [fitBaselineOrder, setFitBaselineOrder] = useState(0);
-  const [fitSigmaClipSigma, setFitSigmaClipSigma] = useState(0.0);
-  const [fitSigmaClipIterations, setFitSigmaClipIterations] = useState(0);
   const [recordTemplate, setRecordTemplate] = useState<RecordTemplate | null>(
     defaultTransitRecordTemplate
   );
-  const [selectedComparisonDiagnostic, setSelectedComparisonDiagnostic] = useState<string | null>(null);
-  const [recordLoading, setRecordLoading] = useState(false);
-  const [recordSubmitting, setRecordSubmitting] = useState(false);
-  const [recordAnswers, setRecordAnswers] = useState<Record<string, unknown>>(
-    buildInitialRecordAnswers(defaultTransitRecordTemplate)
+
+  // ── Reducer ──────────────────────────────────────────────────────────
+  const stateDefaults = useMemo<TransitLabDefaults>(
+    () => ({
+      aperture: DEFAULT_APERTURE,
+      recordAnswers: buildInitialRecordAnswers(defaultTransitRecordTemplate),
+    }),
+    [],
   );
-  const [recordTitle, setRecordTitle] = useState('');
-  const [recordSaved, setRecordSaved] = useState<RecordSubmissionResponse | null>(null);
+  const [state, dispatch] = useReducer(
+    transitLabReducer,
+    stateDefaults,
+    createInitialTransitLabState,
+  );
+  const patch = useCallback(
+    (changes: Partial<TransitLabState>) => dispatch({ type: 'patch', changes }),
+    [],
+  );
 
-  // Per-star aperture state
-  const [targetAperture, setTargetAperture] = useState<ApertureParams>({ ...DEFAULT_APERTURE });
-  const [targetPositionOffset, setTargetPositionOffset] = useState<PixelCoordinate | null>(null);
-  const [comparisonStars, setComparisonStars] = useState<ComparisonStar[]>([]);
-  const [selectedStar, setSelectedStar] = useState<StarKey>('T');
+  // Destructure for convenient access throughout the component
+  const {
+    activeObservationId,
+    cutoutSizePx,
+    pendingCutoutSizePx,
+    selectedFrameIndex,
+    targetAperture,
+    targetPositionOffset,
+    comparisonStars,
+    selectedStar,
+    result,
+    foldEnabled,
+    foldPeriod,
+    foldT0,
+    fitLimbDarkening,
+    fitDataSource,
+    bjdWindowStart,
+    bjdWindowEnd,
+    fitWindowPhase,
+    fitBaselineOrder,
+    fitSigmaClipSigma,
+    fitSigmaClipIterations,
+    fitResult,
+    recordAnswers,
+    recordTitle,
+    submittedRecord,
+    seedRecordSummary,
+    preview,
+    previewLoading,
+    framePreviewLoading,
+    previewProgress,
+    previewMessage,
+    running,
+    progress,
+    runProgressEvent,
+    errorMessage,
+    fitting,
+    fitProgress,
+    fitDebugRequest,
+    fitDebugLog,
+    showTicMarkers,
+    selectedComparisonDiagnostic,
+    qcIncludedComparisonLabels,
+    recordLoading,
+    recordSubmitting,
+  } = state;
 
+  const setStateField = useCallback(function <K extends keyof TransitLabState>(
+    key: K,
+    value: StateSetterArg<TransitLabState[K]>
+  ) {
+    dispatch({
+      type: 'update',
+      updater: (currentState) => ({
+        [key]:
+          typeof value === 'function'
+            ? (value as (prev: TransitLabState[K]) => TransitLabState[K])(currentState[key])
+            : value,
+      }) as Partial<TransitLabState>,
+    });
+  }, []);
+
+  const setActiveObservationId = useCallback(
+    (value: StateSetterArg<TransitLabState['activeObservationId']>) =>
+      setStateField('activeObservationId', value),
+    [setStateField]
+  );
+  const setCutoutSizePx = useCallback(
+    (value: StateSetterArg<TransitLabState['cutoutSizePx']>) =>
+      setStateField('cutoutSizePx', value),
+    [setStateField]
+  );
+  const setPendingCutoutSizePx = useCallback(
+    (value: StateSetterArg<TransitLabState['pendingCutoutSizePx']>) =>
+      setStateField('pendingCutoutSizePx', value),
+    [setStateField]
+  );
+  const setSelectedFrameIndex = useCallback(
+    (value: StateSetterArg<TransitLabState['selectedFrameIndex']>) =>
+      setStateField('selectedFrameIndex', value),
+    [setStateField]
+  );
+  const setTargetAperture = useCallback(
+    (value: StateSetterArg<TransitLabState['targetAperture']>) =>
+      setStateField('targetAperture', value),
+    [setStateField]
+  );
+  const setTargetPositionOffset = useCallback(
+    (value: StateSetterArg<TransitLabState['targetPositionOffset']>) =>
+      setStateField('targetPositionOffset', value),
+    [setStateField]
+  );
+  const setComparisonStars = useCallback(
+    (value: StateSetterArg<TransitLabState['comparisonStars']>) =>
+      setStateField('comparisonStars', value),
+    [setStateField]
+  );
+  const setSelectedStar = useCallback(
+    (value: StateSetterArg<TransitLabState['selectedStar']>) =>
+      setStateField('selectedStar', value),
+    [setStateField]
+  );
+  const setResult = useCallback(
+    (value: StateSetterArg<TransitLabState['result']>) => setStateField('result', value),
+    [setStateField]
+  );
+  const setFoldEnabled = useCallback(
+    (value: StateSetterArg<TransitLabState['foldEnabled']>) =>
+      setStateField('foldEnabled', value),
+    [setStateField]
+  );
+  const setFoldPeriod = useCallback(
+    (value: StateSetterArg<TransitLabState['foldPeriod']>) =>
+      setStateField('foldPeriod', value),
+    [setStateField]
+  );
+  const setFoldT0 = useCallback(
+    (value: StateSetterArg<TransitLabState['foldT0']>) => setStateField('foldT0', value),
+    [setStateField]
+  );
+  const setFitLimbDarkening = useCallback(
+    (value: StateSetterArg<TransitLabState['fitLimbDarkening']>) =>
+      setStateField('fitLimbDarkening', value),
+    [setStateField]
+  );
+  const setFitDataSource = useCallback(
+    (value: StateSetterArg<TransitLabState['fitDataSource']>) =>
+      setStateField('fitDataSource', value),
+    [setStateField]
+  );
+  const setBjdWindowStart = useCallback(
+    (value: StateSetterArg<TransitLabState['bjdWindowStart']>) =>
+      setStateField('bjdWindowStart', value),
+    [setStateField]
+  );
+  const setBjdWindowEnd = useCallback(
+    (value: StateSetterArg<TransitLabState['bjdWindowEnd']>) =>
+      setStateField('bjdWindowEnd', value),
+    [setStateField]
+  );
+  const setFitWindowPhase = useCallback(
+    (value: StateSetterArg<TransitLabState['fitWindowPhase']>) =>
+      setStateField('fitWindowPhase', value),
+    [setStateField]
+  );
+  const setFitBaselineOrder = useCallback(
+    (value: StateSetterArg<TransitLabState['fitBaselineOrder']>) =>
+      setStateField('fitBaselineOrder', value),
+    [setStateField]
+  );
+  const setFitSigmaClipSigma = useCallback(
+    (value: StateSetterArg<TransitLabState['fitSigmaClipSigma']>) =>
+      setStateField('fitSigmaClipSigma', value),
+    [setStateField]
+  );
+  const setFitSigmaClipIterations = useCallback(
+    (value: StateSetterArg<TransitLabState['fitSigmaClipIterations']>) =>
+      setStateField('fitSigmaClipIterations', value),
+    [setStateField]
+  );
+  const setFitResult = useCallback(
+    (value: StateSetterArg<TransitLabState['fitResult']>) =>
+      setStateField('fitResult', value),
+    [setStateField]
+  );
+  const setRecordAnswers = useCallback(
+    (value: StateSetterArg<TransitLabState['recordAnswers']>) =>
+      setStateField('recordAnswers', value),
+    [setStateField]
+  );
+  const setRecordTitle = useCallback(
+    (value: StateSetterArg<TransitLabState['recordTitle']>) =>
+      setStateField('recordTitle', value),
+    [setStateField]
+  );
+  const setSubmittedRecord = useCallback(
+    (value: StateSetterArg<TransitLabState['submittedRecord']>) =>
+      setStateField('submittedRecord', value),
+    [setStateField]
+  );
+  const setRunning = useCallback(
+    (value: StateSetterArg<TransitLabState['running']>) => setStateField('running', value),
+    [setStateField]
+  );
+  const setProgress = useCallback(
+    (value: StateSetterArg<TransitLabState['progress']>) => setStateField('progress', value),
+    [setStateField]
+  );
+  const setRunProgressEvent = useCallback(
+    (value: StateSetterArg<TransitLabState['runProgressEvent']>) =>
+      setStateField('runProgressEvent', value),
+    [setStateField]
+  );
+  const setErrorMessage = useCallback(
+    (value: StateSetterArg<TransitLabState['errorMessage']>) =>
+      setStateField('errorMessage', value),
+    [setStateField]
+  );
+  const setFitting = useCallback(
+    (value: StateSetterArg<TransitLabState['fitting']>) => setStateField('fitting', value),
+    [setStateField]
+  );
+  const setFitProgress = useCallback(
+    (value: StateSetterArg<TransitLabState['fitProgress']>) =>
+      setStateField('fitProgress', value),
+    [setStateField]
+  );
+  const setFitDebugRequest = useCallback(
+    (value: StateSetterArg<TransitLabState['fitDebugRequest']>) =>
+      setStateField('fitDebugRequest', value),
+    [setStateField]
+  );
+  const setFitDebugLog = useCallback(
+    (value: StateSetterArg<TransitLabState['fitDebugLog']>) =>
+      setStateField('fitDebugLog', value),
+    [setStateField]
+  );
+  const setShowTicMarkers = useCallback(
+    (value: StateSetterArg<TransitLabState['showTicMarkers']>) =>
+      setStateField('showTicMarkers', value),
+    [setStateField]
+  );
+  const setSelectedComparisonDiagnostic = useCallback(
+    (value: StateSetterArg<TransitLabState['selectedComparisonDiagnostic']>) =>
+      setStateField('selectedComparisonDiagnostic', value),
+    [setStateField]
+  );
+  const setQcIncludedComparisonLabels = useCallback(
+    (value: StateSetterArg<TransitLabState['qcIncludedComparisonLabels']>) =>
+      setStateField('qcIncludedComparisonLabels', value),
+    [setStateField]
+  );
+  const setRecordLoading = useCallback(
+    (value: StateSetterArg<TransitLabState['recordLoading']>) =>
+      setStateField('recordLoading', value),
+    [setStateField]
+  );
+  const setRecordSubmitting = useCallback(
+    (value: StateSetterArg<TransitLabState['recordSubmitting']>) =>
+      setStateField('recordSubmitting', value),
+    [setStateField]
+  );
+
+  // ── Refs (side-effects only, not in reducer) ─────────────────────────
   const previewJobIdRef = useRef<string | null>(null);
   const previewPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const framePreviewAbortRef = useRef<AbortController | null>(null);
@@ -800,26 +408,35 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   const recordTemplateRequestedRef = useRef(false);
   const loadedRecordIdRef = useRef<number | null>(null);
   const restoringSessionPreviewRef = useRef(false);
+  const suppressAnalysisInvalidationRef = useRef(false);
   const analysisConfigSignatureRef = useRef<string | null>(null);
   const observedActiveObservationRef = useRef<string | null | undefined>(undefined);
 
+  // ── Derived values ───────────────────────────────────────────────────
   const selectedObservations = observations.filter((obs) =>
     selectedIds.includes(obs.id)
   );
+  const comparisonDiagnostics = result?.comparison_diagnostics ?? [];
   const fitEngineLabel = fitResult
     ? `${fitResult.used_batman ? 'batman transit model' : 'simplified transit model'} · ${
         fitResult.used_mcmc ? 'emcee MCMC posterior' : 'least-squares optimization'
       }`
     : null;
-  const workflowStorageKey = getTransitLabStorageKey(target.id);
-  const workflowAvailability = getTransitStepAvailability({
-    activeObservationId,
-    cutoutSizePx,
-    comparisonStars,
-    result,
+  const workflowSessionSource: WorkflowSessionSource =
+    draftId && draftId.trim() !== ''
+      ? { kind: 'draft', id: draftId }
+      : seedRecordId !== null
+        ? { kind: 'record-seed', id: seedRecordId }
+        : { kind: 'live' };
+  const workflowDefinition = createTransitWorkflowDefinition({
+    targetId: target.id,
+    targetPeriodDays: target.period_days,
+    defaultAperture: DEFAULT_APERTURE,
   });
+  const persistedTargetPosition =
+    targetPositionOffset ?? preview?.target_position ?? result?.target_position ?? null;
 
-  // Cleanup on unmount
+  // ── Effects: cleanup, hydration ──────────────────────────────────────
   useEffect(() => {
     return () => {
       if (previewPollTimeoutRef.current) {
@@ -847,22 +464,23 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   useEffect(() => {
     if (!observationSelectionHydrated) return;
     if (selectedObservations.length === 0) {
-      setActiveObservationId(null);
+      patch({ activeObservationId: null });
       return;
     }
-    setActiveObservationId((current) => {
-      if (current && selectedObservations.some((obs) => obs.id === current)) return current;
-      return selectedObservations[0].id;
-    });
-  }, [observationSelectionHydrated, selectedObservations]);
+    if (activeObservationId && selectedObservations.some((obs) => obs.id === activeObservationId)) {
+      return;
+    }
+    patch({ activeObservationId: selectedObservations[0].id });
+  }, [observationSelectionHydrated, selectedObservations, activeObservationId, patch]);
 
+  // ── Workflow snapshot (persisted subset of state) ────────────────────
   const workflowSnapshot: PersistedTransitLabState = {
     selectedObservationIds: selectedIds,
     activeObservationId,
     cutoutSizePx,
     selectedFrameIndex,
     targetAperture,
-    targetPositionOffset,
+    targetPositionOffset: persistedTargetPosition,
     comparisonStars,
     selectedStar,
     foldEnabled,
@@ -880,133 +498,140 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     result,
     recordAnswers,
     recordTitle,
-    recordSaved,
+    submittedRecord,
   };
+  const workflowAvailability = workflowDefinition.getAvailability(workflowSnapshot);
 
+  // ── Defaults ref (for reducer actions in callbacks) ──────────────────
+  const currentDefaults = useMemo<TransitLabDefaults>(
+    () => ({
+      aperture: DEFAULT_APERTURE,
+      recordAnswers: recordTemplate
+        ? buildInitialRecordAnswers(recordTemplate)
+        : stateDefaults.recordAnswers,
+    }),
+    [recordTemplate, stateDefaults.recordAnswers],
+  );
+
+  // ── Workflow controller ──────────────────────────────────────────────
   const {
     step,
     setStep,
     replaceStep,
     hydrated: workflowHydrated,
+    hasRestoredSnapshot,
     clearPersistedWorkflow,
-  } = usePersistedWorkflowStep<TransitStep, PersistedTransitLabState, TransitStepAvailability>({
-    storageKey: workflowStorageKey,
-    version: 1,
-    defaultStep: 'select',
+    draftSaveStatus,
+    draftSavedAtLabel,
+  } = useWorkflowController<TransitStep, PersistedTransitLabState, TransitStepAvailability>({
+    scope: {
+      workflowId: workflowDefinition.workflowId,
+      subjectId: target.id,
+      source: workflowSessionSource,
+    },
+    version: workflowDefinition.version,
+    defaultStep: workflowDefinition.defaultStep,
     currentAvailability: workflowAvailability,
-    emptyAvailability: getTransitStepAvailability(null),
-    parseStep: parseTransitStep,
-    clampStep: clampTransitStep,
+    emptyAvailability: workflowDefinition.getAvailability(null),
+    parseStep: workflowDefinition.parseStep,
+    clampStep: workflowDefinition.clampStep,
     snapshot: workflowSnapshot,
-    restoreSnapshot: (raw) =>
-      normalizePersistedTransitLabState(raw, target.id, target.period_days),
-    getSnapshotAvailability: getTransitStepAvailability,
+    restoreSnapshot: workflowDefinition.normalizeSnapshot,
+    getSnapshotAvailability: workflowDefinition.getAvailability,
+    draft: {
+      draftId,
+      title: recordTitle.trim() || `${target.name} draft`,
+      userPresent: Boolean(user),
+      seedRecordId,
+      getRestoreReady: (session) =>
+        seedRecordId === null ||
+        session.hasRestoredSnapshot ||
+        loadedRecordIdRef.current === seedRecordId,
+      hasMeaningfulSnapshot: workflowDefinition.hasMeaningfulSnapshot,
+    },
     applyRestoredSnapshot: (saved, restoredStep) => {
+      // Side-effect resets (refs)
       loadedRecordIdRef.current = null;
-      restoringSessionPreviewRef.current = false;
       analysisConfigSignatureRef.current = null;
       observedActiveObservationRef.current = undefined;
 
-      if (!saved) {
-        setActiveObservationId(null);
-        setPreview(null);
-        setCutoutSizePx(null);
-        setPendingCutoutSizePx(35);
-        setSelectedFrameIndex(null);
-        setPreviewLoading(false);
-        setFramePreviewLoading(false);
-        setPreviewProgress(0);
-        setPreviewMessage(null);
-        setRunning(false);
-        setProgress(0);
-        setRunProgressEvent(null);
-        setErrorMessage(null);
-        setResult(null);
-        setFoldEnabled(false);
-        setFoldPeriod(null);
-        setFoldT0(0);
-        setFitResult(null);
-        setFitting(false);
-        setFitProgress(null);
-        setShowTicMarkers(false);
-        setFitLimbDarkening(false);
-        setFitDataSource('bjd_window');
-        setBjdWindowStart(null);
-        setBjdWindowEnd(null);
-        setFitWindowPhase(0.12);
-        setFitBaselineOrder(0);
-        setFitSigmaClipSigma(0.0);
-        setFitSigmaClipIterations(0);
-        setTargetAperture({ ...DEFAULT_APERTURE });
-        setTargetPositionOffset(null);
-        setComparisonStars([]);
-        setSelectedStar('T');
-        setRecordTitle('');
-        setRecordSaved(null);
-        setRecordAnswers((current) =>
-          recordTemplate ? buildInitialRecordAnswers(recordTemplate) : current
-        );
-        return;
-      }
-
       const resumeFromSelect = restoredStep === 'select';
-      restoringSessionPreviewRef.current =
-        !resumeFromSelect &&
-        saved.activeObservationId !== null &&
-        saved.cutoutSizePx !== null;
 
-      if (saved.selectedObservationIds.length > 0) {
-        selectAllObservations(saved.selectedObservationIds);
+      if (saved) {
+        restoringSessionPreviewRef.current =
+          !resumeFromSelect &&
+          saved.activeObservationId !== null &&
+          saved.cutoutSizePx !== null;
+        if (saved.selectedObservationIds.length > 0) {
+          selectAllObservations(saved.selectedObservationIds);
+        }
+      } else {
+        restoringSessionPreviewRef.current = false;
       }
 
-      setActiveObservationId(saved.activeObservationId);
-      setPreview(null);
-      setCutoutSizePx(resumeFromSelect ? null : saved.cutoutSizePx);
-      setPendingCutoutSizePx(saved.cutoutSizePx ?? 35);
-      setSelectedFrameIndex(resumeFromSelect ? null : saved.selectedFrameIndex);
-      setPreviewLoading(false);
-      setFramePreviewLoading(false);
-      setPreviewProgress(0);
-      setPreviewMessage(null);
-      setRunning(false);
-      setProgress(0);
-      setRunProgressEvent(null);
-      setErrorMessage(null);
-      setTargetAperture(saved.targetAperture);
-      setTargetPositionOffset(resumeFromSelect ? null : saved.targetPositionOffset);
-      setComparisonStars(resumeFromSelect ? [] : saved.comparisonStars);
-      setSelectedStar(saved.selectedStar);
-      setFoldEnabled(saved.foldEnabled);
-      setFoldPeriod(saved.foldPeriod);
-      setFoldT0(saved.foldT0);
-      setFitLimbDarkening(saved.fitLimbDarkening);
-      setFitDataSource(saved.fitDataSource);
-      setBjdWindowStart(saved.bjdWindowStart);
-      setBjdWindowEnd(saved.bjdWindowEnd);
-      setFitWindowPhase(saved.fitWindowPhase);
-      setFitBaselineOrder(saved.fitBaselineOrder);
-      setFitSigmaClipSigma(saved.fitSigmaClipSigma);
-      setFitSigmaClipIterations(saved.fitSigmaClipIterations);
-      setFitResult(resumeFromSelect ? null : saved.fitResult);
-      setFitting(false);
-      setFitProgress(null);
-      setResult(resumeFromSelect ? null : saved.result);
-      setRecordAnswers(
-        Object.keys(saved.recordAnswers).length > 0
-          ? saved.recordAnswers
-          : buildInitialRecordAnswers(recordTemplate)
-      );
-      setRecordTitle(saved.recordTitle);
-      setRecordSaved(resumeFromSelect ? null : saved.recordSaved);
+      dispatch({
+        type: 'restore',
+        snapshot: saved,
+        resumeFromSelect,
+        defaults: currentDefaults,
+      });
     },
   });
 
+  // ── Invalidation dispatcher ──────────────────────────────────────────
+  const applyTransitInvalidation = useCallback(
+    (action: TransitInvalidationAction) => {
+      const resolution = reduceTransitInvalidation(
+        { step, hasPhotometryResult: Boolean(result) },
+        action,
+      );
+
+      // Side effects: cancel in-flight async work
+      if (resolution.cancelPreviewJobs) {
+        if (previewPollTimeoutRef.current) {
+          clearTimeout(previewPollTimeoutRef.current);
+          previewPollTimeoutRef.current = null;
+        }
+        const previewJobId = previewJobIdRef.current;
+        previewJobIdRef.current = null;
+        if (previewJobId) {
+          cancelTransitPreviewJob(previewJobId).catch(() => undefined);
+        }
+        framePreviewAbortRef.current?.abort();
+      }
+      if (resolution.abortPhotometryRun) {
+        runAbortRef.current?.abort();
+      }
+      if (resolution.clearPreviewRuntime) {
+        restoringSessionPreviewRef.current = false;
+      }
+
+      // State transition (atomic)
+      dispatch({
+        type: 'apply-invalidation',
+        resolution,
+        defaults: currentDefaults,
+      });
+
+      // Step transition (managed by workflow controller)
+      if (resolution.nextStep && step !== resolution.nextStep) {
+        replaceStep(resolution.nextStep);
+      }
+    },
+    [currentDefaults, replaceStep, result, step],
+  );
+
   useEffect(() => {
-    if (!recordId || !user) return;
-    if (loadedRecordIdRef.current === recordId) return;
+    if (!workflowHydrated) return;
+    if (!seedRecordId || !user) return;
+    if (loadedRecordIdRef.current === seedRecordId) return;
+    if (hasRestoredSnapshot) {
+      loadedRecordIdRef.current = seedRecordId;
+      return;
+    }
     let cancelled = false;
 
-    fetchMyRecordSubmission(recordId)
+    fetchMyRecordSubmission(seedRecordId)
       .then((record) => {
         if (cancelled || !record || record.target_id !== target.id) return;
         const payload = record.payload as {
@@ -1019,7 +644,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
             comparison_apertures?: TransitApertureConfig[];
             aperture?: ApertureParams;
             fit_controls?: {
-              fit_data_source?: FitDataSource;
+              fit_data_source?: TransitFitDataSource;
               bjd_start?: number | null;
               bjd_end?: number | null;
               fit_window_phase?: number;
@@ -1027,6 +652,10 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
               sigma_clip_sigma?: number;
               sigma_clip_iterations?: number;
               fit_limb_darkening?: boolean;
+            };
+            transit_fit?: {
+              period?: number | null;
+              t0?: number | null;
             };
           };
           answers?: Record<string, unknown>;
@@ -1043,14 +672,16 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
 
         if (observationIds.length > 0) {
           selectAllObservations(observationIds);
-          setActiveObservationId(observationIds[0]);
         }
-        setCutoutSizePx(payload.context?.field_size_px ?? 35);
-        setPendingCutoutSizePx(payload.context?.field_size_px ?? 35);
-        setSelectedFrameIndex(null);
-        setTargetPositionOffset(payload.context?.target_position ?? null);
-        setComparisonStars(
-          (
+        restoringSessionPreviewRef.current =
+          observationIds.length > 0 && (payload.context?.field_size_px ?? 35) !== null;
+        patch({
+          activeObservationId: observationIds.length > 0 ? observationIds[0] : null,
+          cutoutSizePx: payload.context?.field_size_px ?? 35,
+          pendingCutoutSizePx: payload.context?.field_size_px ?? 35,
+          selectedFrameIndex: null,
+          targetPositionOffset: payload.context?.target_position ?? null,
+          comparisonStars:
             payload.context?.comparison_apertures?.map((item) => ({
               position: item.position,
               aperture: {
@@ -1059,54 +690,75 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                 outerAnnulus: item.outer_annulus,
               },
             })) ??
-            (payload.context?.comparison_positions ?? []).slice(0, 3).map((position) => ({
-              position,
-              aperture: payload.context?.aperture ?? { ...DEFAULT_APERTURE },
-            }))
-          )
-        );
-        setFitWindowPhase(payload.context?.fit_controls?.fit_window_phase ?? 0.12);
-        setFitBaselineOrder(payload.context?.fit_controls?.baseline_order ?? 0);
-        setFitSigmaClipSigma(payload.context?.fit_controls?.sigma_clip_sigma ?? 0.0);
-        setFitSigmaClipIterations(payload.context?.fit_controls?.sigma_clip_iterations ?? 0);
-        setFitLimbDarkening(payload.context?.fit_controls?.fit_limb_darkening ?? false);
-        setFitDataSource(payload.context?.fit_controls?.fit_data_source ?? 'bjd_window');
-        setBjdWindowStart(payload.context?.fit_controls?.bjd_start ?? null);
-        setBjdWindowEnd(payload.context?.fit_controls?.bjd_end ?? null);
-        setTargetAperture(
-          payload.context?.target_aperture
+            (payload.context?.comparison_positions ?? [])
+              .slice(0, MAX_COMPARISON_STARS)
+              .map((position) => ({
+                position,
+                aperture: payload.context?.aperture ?? { ...DEFAULT_APERTURE },
+              })),
+          fitWindowPhase: payload.context?.fit_controls?.fit_window_phase ?? 0.12,
+          fitBaselineOrder: payload.context?.fit_controls?.baseline_order ?? 0,
+          fitSigmaClipSigma: payload.context?.fit_controls?.sigma_clip_sigma ?? 0.0,
+          fitSigmaClipIterations: payload.context?.fit_controls?.sigma_clip_iterations ?? 0,
+          fitLimbDarkening: payload.context?.fit_controls?.fit_limb_darkening ?? false,
+          fitDataSource: payload.context?.fit_controls?.fit_data_source ?? 'bjd_window',
+          foldPeriod:
+            typeof payload.context?.transit_fit?.period === 'number' &&
+              Number.isFinite(payload.context.transit_fit.period) &&
+              payload.context.transit_fit.period > 0
+              ? payload.context.transit_fit.period
+              : target.period_days ?? null,
+          foldT0:
+            typeof payload.context?.transit_fit?.t0 === 'number' &&
+              Number.isFinite(payload.context.transit_fit.t0)
+              ? payload.context.transit_fit.t0
+              : 0,
+          bjdWindowStart: payload.context?.fit_controls?.bjd_start ?? null,
+          bjdWindowEnd: payload.context?.fit_controls?.bjd_end ?? null,
+          targetAperture: payload.context?.target_aperture
             ? {
                 apertureRadius: payload.context.target_aperture.aperture_radius,
                 innerAnnulus: payload.context.target_aperture.inner_annulus,
                 outerAnnulus: payload.context.target_aperture.outer_annulus,
               }
-            : payload.context?.aperture ?? { ...DEFAULT_APERTURE }
-        );
-        setSelectedStar('T');
-        setRecordAnswers(payload.answers ?? buildInitialRecordAnswers(recordTemplate));
-        setRecordTitle(record.title);
-        setRecordSaved({
-          submission_id: record.submission_id,
-          title: record.title,
-          created_at: record.created_at,
-          export_path: '',
+            : payload.context?.aperture ?? { ...DEFAULT_APERTURE },
+          selectedStar: 'T',
+          recordAnswers: payload.answers ?? buildInitialRecordAnswers(recordTemplate),
+          recordTitle: record.title,
+          seedRecordSummary: {
+            submission_id: record.submission_id,
+            title: record.title,
+            created_at: record.created_at,
+            export_path: '',
+          },
+          submittedRecord: null,
         });
-        replaceStep('select');
-        loadedRecordIdRef.current = recordId;
+        replaceStep('run');
+        loadedRecordIdRef.current = seedRecordId;
       })
       .catch((error) => {
         if (cancelled) return;
         console.error('Failed to restore saved record', error);
-        setErrorMessage(
-          error instanceof Error ? error.message : 'Failed to reopen saved record.'
-        );
+        patch({
+          errorMessage:
+            error instanceof Error ? error.message : 'Failed to reopen saved record.',
+        });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [recordId, recordTemplate, selectAllObservations, target.id, user]);
-
+  }, [
+    hasRestoredSnapshot,
+    patch,
+    seedRecordId,
+    recordTemplate,
+    replaceStep,
+    selectAllObservations,
+    target.id,
+    user,
+    workflowHydrated,
+  ]);
   useEffect(() => {
     if (!workflowHydrated) return;
     if (observedActiveObservationRef.current === undefined) {
@@ -1115,31 +767,34 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     }
     if (observedActiveObservationRef.current === activeObservationId) return;
     observedActiveObservationRef.current = activeObservationId;
-    setSelectedFrameIndex(null);
-    setRecordSaved(null);
-    setRecordTitle('');
-    setProgress(0);
-    setRunProgressEvent(null);
-    setRecordAnswers((current) =>
-      recordTemplate ? buildInitialRecordAnswers(recordTemplate) : current
-    );
-  }, [activeObservationId, recordTemplate]);
+    analysisConfigSignatureRef.current = null;
+    applyTransitInvalidation({ type: 'observation-changed' });
+  }, [activeObservationId, applyTransitInvalidation, workflowHydrated]);
 
   // Fetch cutout preview
   useEffect(() => {
     if (!workflowHydrated) return;
-    const stepNeedsPreview = step === 'select' || step === 'run';
+    const stepNeedsPreview =
+      step === 'select' ||
+      (step === 'run' &&
+        preview === null &&
+        result === null &&
+        targetPositionOffset === null);
     const shouldDeferRestoredPreview =
       restoringSessionPreviewRef.current &&
       result !== null &&
       preview === null &&
       !stepNeedsPreview;
 
+    const clearPreviewRuntime = { previewLoading: false, framePreviewLoading: false, previewProgress: 0, previewMessage: null } as const;
+
     if (shouldDeferRestoredPreview) {
-      setPreviewLoading(false);
-      setFramePreviewLoading(false);
-      setPreviewProgress(0);
-      setPreviewMessage(null);
+      patch(clearPreviewRuntime);
+      return;
+    }
+
+    if (!stepNeedsPreview) {
+      patch(clearPreviewRuntime);
       return;
     }
 
@@ -1152,11 +807,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       previewJobIdRef.current = null;
       if (previewJobId) cancelTransitPreviewJob(previewJobId).catch(() => undefined);
       framePreviewAbortRef.current?.abort();
-      setPreview(null);
-      setPreviewLoading(false);
-      setFramePreviewLoading(false);
-      setPreviewProgress(0);
-      setPreviewMessage(null);
+      patch({ preview: null, ...clearPreviewRuntime });
       return;
     }
 
@@ -1168,13 +819,14 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       preview.frame_index === currentFrameIndex;
 
     if (canReuse) {
-      setPreviewLoading(false);
-      setPreviewProgress(1);
-      setPreviewMessage(
-        currentFrameIndex !== null
-          ? `Using loaded frame ${currentFrameIndex + 1} from ${preview.cutout_size_px}px cutout.`
-          : `Using loaded ${preview.cutout_size_px}px cutout.`
-      );
+      patch({
+        previewLoading: false,
+        previewProgress: 1,
+        previewMessage:
+          currentFrameIndex !== null
+            ? `Using loaded frame ${currentFrameIndex + 1} from ${preview.cutout_size_px}px cutout.`
+            : `Using loaded ${preview.cutout_size_px}px cutout.`,
+      });
       return;
     }
 
@@ -1191,7 +843,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       preview.cutout_size_px >= cutoutSizePx;
     const preserveRestoredState = restoringSessionPreviewRef.current;
 
-    setErrorMessage(null);
+    patch({ errorMessage: null });
 
     if (previewPollTimeoutRef.current) {
       clearTimeout(previewPollTimeoutRef.current);
@@ -1203,12 +855,13 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     framePreviewAbortRef.current?.abort();
 
     if (canRefreshFrameOnly) {
-      setFramePreviewLoading(true);
-      setPreviewMessage(
-        currentFrameIndex !== null
-          ? `Loading frame ${currentFrameIndex + 1}...`
-          : 'Loading selected frame...'
-      );
+      patch({
+        framePreviewLoading: true,
+        previewMessage:
+          currentFrameIndex !== null
+            ? `Loading frame ${currentFrameIndex + 1}...`
+            : 'Loading selected frame...',
+      });
       const controller = new AbortController();
       framePreviewAbortRef.current = controller;
       fetchTransitCutoutPreview(
@@ -1220,26 +873,28 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       )
         .then((response) => {
           if (framePreviewAbortRef.current !== controller) return;
-          setPreview(response);
           restoringSessionPreviewRef.current = false;
-          setPreviewMessage(
-            response.frame_index !== null
-              ? `Viewing frame ${response.frame_index + 1} / ${response.frame_count}.`
-              : 'Preview ready.'
-          );
-          if (selectedFrameIndex === null && response.frame_index !== null) {
-            setSelectedFrameIndex(response.frame_index);
-          }
+          patch({
+            preview: response,
+            previewMessage:
+              response.frame_index !== null
+                ? `Viewing frame ${response.frame_index + 1} / ${response.frame_count}.`
+                : 'Preview ready.',
+            ...(selectedFrameIndex === null && response.frame_index !== null
+              ? { selectedFrameIndex: response.frame_index }
+              : {}),
+          });
         })
         .catch((error) => {
           if (controller.signal.aborted) return;
           console.error('Failed to refresh transit preview frame', error);
-          setErrorMessage(
-            error instanceof Error ? error.message : 'Failed to load selected frame.'
-          );
+          patch({
+            errorMessage:
+              error instanceof Error ? error.message : 'Failed to load selected frame.',
+          });
         })
         .finally(() => {
-          setFramePreviewLoading(false);
+          patch({ framePreviewLoading: false });
           if (framePreviewAbortRef.current === controller) {
             framePreviewAbortRef.current = null;
           }
@@ -1247,65 +902,113 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       return;
     }
 
-    setPreviewLoading(true);
-    setFramePreviewLoading(false);
-    setPreviewProgress(0);
-    setPreviewMessage(
-      currentFrameIndex !== null
-        ? `Loading frame ${currentFrameIndex + 1}...`
-        : 'Queued preview request.'
-    );
-
-    setPreview(null);
+    patch({
+      previewLoading: true,
+      framePreviewLoading: false,
+      previewProgress: 0,
+      previewMessage:
+        currentFrameIndex !== null
+          ? `Loading frame ${currentFrameIndex + 1}...`
+          : 'Queued preview request.',
+      preview: null,
+      ...(preserveRestoredState
+        ? {}
+        : {
+            result: null,
+            fitResult: null,
+            progress: 0,
+            runProgressEvent: null,
+            comparisonStars: [],
+            targetPositionOffset: null,
+            selectedStar: 'T' as const,
+          }),
+    });
     if (!preserveRestoredState) {
-      setResult(null);
-      setFitResult(null);
-      setProgress(0);
-      setRunProgressEvent(null);
-      setComparisonStars([]);
-      setTargetPositionOffset(null);
-      setSelectedStar('T');
       replaceStep('select');
     }
+
+    const loadPreviewInlineFallback = async (message: string) => {
+      try {
+        patch({ previewMessage: message });
+        const response = await fetchTransitCutoutPreview(
+          target.id,
+          activeObservationId,
+          requestSizePx,
+          currentFrameIndex
+        );
+        if (previewJobIdRef.current !== null) {
+          return;
+        }
+        restoringSessionPreviewRef.current = false;
+        patch({
+          preview: response,
+          previewLoading: false,
+          previewProgress: 1,
+          previewMessage:
+            response.frame_index !== null
+              ? `Viewing frame ${response.frame_index + 1} / ${response.frame_count}.`
+              : 'Preview ready.',
+          ...(selectedFrameIndex === null && response.frame_index !== null
+            ? { selectedFrameIndex: response.frame_index }
+            : {}),
+        });
+      } catch (fallbackError) {
+        console.error('Failed to recover transit preview inline', fallbackError);
+        restoringSessionPreviewRef.current = false;
+        patch({
+          errorMessage:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : 'Failed to recover TESS cutout preview.',
+          preview: null,
+          previewLoading: false,
+        });
+      }
+    };
 
     const pollPreviewJob = async (jobId: string) => {
       try {
         const job = await fetchTransitPreviewJob(jobId);
         if (previewJobIdRef.current !== jobId) return;
 
-        setPreviewProgress(job.progress);
-        setPreviewMessage(job.message);
+        patch({ previewProgress: job.progress, previewMessage: job.message });
 
         if (job.status === 'completed' && job.result) {
-          setPreview(job.result);
-          setPreviewLoading(false);
-          setPreviewProgress(1);
           restoringSessionPreviewRef.current = false;
           previewPollTimeoutRef.current = null;
           previewJobIdRef.current = null;
-          if (selectedFrameIndex === null && job.result.frame_index !== null) {
-            setSelectedFrameIndex(job.result.frame_index);
-          }
+          patch({
+            preview: job.result,
+            previewLoading: false,
+            previewProgress: 1,
+            ...(selectedFrameIndex === null && job.result.frame_index !== null
+              ? { selectedFrameIndex: job.result.frame_index }
+              : {}),
+          });
           return;
         }
 
         if (job.status === 'failed') {
-          setPreview(null);
-          setPreviewLoading(false);
           restoringSessionPreviewRef.current = false;
           previewPollTimeoutRef.current = null;
-          setErrorMessage(job.error ?? 'Failed to load TESS cutout preview.');
           previewJobIdRef.current = null;
+          patch({
+            preview: null,
+            previewLoading: false,
+            errorMessage: job.error ?? 'Failed to load TESS cutout preview.',
+          });
           return;
         }
 
         if (job.status === 'cancelled') {
-          setPreview(null);
-          setPreviewLoading(false);
           restoringSessionPreviewRef.current = false;
           previewPollTimeoutRef.current = null;
-          setErrorMessage('Transit preview loading stopped.');
           previewJobIdRef.current = null;
+          patch({
+            preview: null,
+            previewLoading: false,
+            errorMessage: 'Transit preview loading stopped.',
+          });
           return;
         }
 
@@ -1314,33 +1017,36 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
         }, 400);
       } catch (error) {
         if (previewJobIdRef.current !== jobId) return;
-        console.error('Failed to poll transit preview job', error);
+        const isMissingPreviewJob =
+          error instanceof Error &&
+          /preview job not found|GET \/transit\/preview-jobs\/.* failed: 404/i.test(error.message);
         previewPollTimeoutRef.current = null;
-        setErrorMessage(
-          error instanceof Error ? error.message : 'Failed to monitor TESS cutout preview.'
-        );
-        setPreview(null);
-        setPreviewLoading(false);
-        restoringSessionPreviewRef.current = false;
         previewJobIdRef.current = null;
+        if (isMissingPreviewJob) {
+          void loadPreviewInlineFallback('Preview state expired. Recovering cutout directly...');
+          return;
+        }
+        console.error('Failed to poll transit preview job', error);
+        restoringSessionPreviewRef.current = false;
+        patch({
+          errorMessage:
+            error instanceof Error ? error.message : 'Failed to monitor TESS cutout preview.',
+          preview: null,
+          previewLoading: false,
+        });
       }
     };
 
     createTransitPreviewJob(target.id, activeObservationId, requestSizePx, currentFrameIndex)
       .then((job) => {
         previewJobIdRef.current = job.job_id;
-        setPreviewProgress(job.progress);
-        setPreviewMessage(job.message);
+        patch({ previewProgress: job.progress, previewMessage: job.message });
         void pollPreviewJob(job.job_id);
       })
       .catch((error) => {
         console.error('Failed to start transit preview job', error);
-        setErrorMessage(
-          error instanceof Error ? error.message : 'Failed to start TESS cutout preview.'
-        );
-        setPreview(null);
-        setPreviewLoading(false);
-        restoringSessionPreviewRef.current = false;
+        previewJobIdRef.current = null;
+        void loadPreviewInlineFallback('Preview job failed. Loading cutout directly...');
       });
   }, [
     activeObservationId,
@@ -1350,12 +1056,13 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     selectedFrameIndex,
     step,
     target.id,
+    targetPositionOffset,
     workflowHydrated,
   ]);
 
   useEffect(() => {
     if (!result) {
-      setRecordSaved(null);
+      setSubmittedRecord(null);
       return;
     }
     if (!recordTitle) {
@@ -1438,44 +1145,39 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     const previousSignature = analysisConfigSignatureRef.current;
     analysisConfigSignatureRef.current = nextSignature;
 
-    if (previousSignature === null || previousSignature === nextSignature) return;
-
-    setFitResult(null);
-    setProgress(0);
-    setRunProgressEvent(null);
-    setRecordSaved(null);
-    if (!result) return;
-    setResult(null);
-    if (step === 'lightcurve' || step === 'transitfit' || step === 'record') {
-      replaceStep('run');
+    if (suppressAnalysisInvalidationRef.current) {
+      suppressAnalysisInvalidationRef.current = false;
+      return;
     }
+
+    if (previousSignature === null || previousSignature === nextSignature) return;
+    applyTransitInvalidation({ type: 'analysis-config-changed' });
   }, [
     activeObservationId,
+    applyTransitInvalidation,
     comparisonStars,
     cutoutSizePx,
-    result,
-    step,
     targetAperture,
     targetPositionOffset,
-    replaceStep,
     workflowHydrated,
   ]);
 
   useEffect(() => {
-    const comparisonDiagnostics = result?.comparison_diagnostics ?? [];
     if (!result || comparisonDiagnostics.length === 0) {
       setSelectedComparisonDiagnostic(null);
+      setQcIncludedComparisonLabels([]);
       return;
     }
     const bestDiagnostic = [...comparisonDiagnostics].sort(
       (left, right) => left.differential_rms - right.differential_rms
     )[0];
     setSelectedComparisonDiagnostic(bestDiagnostic.label);
+    setQcIncludedComparisonLabels(comparisonDiagnostics.map((diagnostic) => diagnostic.label));
   }, [result]);
 
   // Effective target position (original or user-dragged)
   const effectiveTargetPosition: PixelCoordinate | null =
-    preview ? (targetPositionOffset ?? preview.target_position) : null;
+    targetPositionOffset ?? preview?.target_position ?? result?.target_position ?? null;
 
   // Build star overlay array for the cutout viewer
   const buildStarOverlays = (): StarOverlay[] => {
@@ -1504,11 +1206,33 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
 
   const starOverlays = buildStarOverlays();
   const selectedComparisonDiagnosticData: TransitComparisonDiagnostic | null =
-    (result?.comparison_diagnostics ?? []).find(
+    comparisonDiagnostics.find(
       (diagnostic) => diagnostic.label === selectedComparisonDiagnostic
-    ) ?? (result?.comparison_diagnostics ?? [])[0] ?? null;
-  const targetComparisonCollisionPosition =
-    preview ? (targetPositionOffset ?? preview.target_position) : null;
+    ) ?? comparisonDiagnostics[0] ?? null;
+  const qcIncludedDiagnostics = comparisonDiagnostics.filter((diagnostic) =>
+    qcIncludedComparisonLabels.includes(diagnostic.label)
+  );
+  const persistedComparisonStars: ComparisonStar[] = comparisonDiagnostics.map((diagnostic) => ({
+    position: diagnostic.position,
+    aperture: {
+      apertureRadius: diagnostic.aperture_radius,
+      innerAnnulus: diagnostic.inner_annulus,
+      outerAnnulus: diagnostic.outer_annulus,
+    },
+  }));
+  const qcBestDiagnostic: TransitComparisonDiagnostic | null =
+    [...comparisonDiagnostics].sort(
+      (left, right) => left.differential_rms - right.differential_rms
+    )[0] ?? null;
+  const qcSelectionDirty =
+    comparisonDiagnostics.length > 0 &&
+    comparisonDiagnostics.some(
+      (diagnostic) => !qcIncludedComparisonLabels.includes(diagnostic.label)
+    );
+  const qcExcludedCount = comparisonDiagnostics.length - qcIncludedDiagnostics.length;
+  const qcCanApply =
+    Boolean(result) && qcIncludedDiagnostics.length > 0 && qcSelectionDirty && !running;
+  const targetComparisonCollisionPosition = effectiveTargetPosition;
   const recommendedComparisonStars = (preview?.tic_stars ?? [])
     .filter((star) => star.recommended)
     .filter(
@@ -1538,7 +1262,14 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   };
 
   // Step state
-  const stepOrder: TransitStep[] = ['select', 'run', 'lightcurve', 'transitfit', 'record'];
+  const stepOrder: TransitStep[] = [
+    'select',
+    'run',
+    'comparisonqc',
+    'lightcurve',
+    'transitfit',
+    'record',
+  ];
   const currentStepIndex = stepOrder.indexOf(step);
 
   const getStepState = (stepId: TransitStep): StepState => {
@@ -1554,6 +1285,13 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       if (!preview || comparisonStars.length === 0) return 'locked';
       if (currentStepIndex > targetIndex) return 'completed';
       if (step === 'run') return 'accessible';
+      return 'locked';
+    }
+    if (stepId === 'comparisonqc') {
+      if (step === 'comparisonqc' && running) return 'accessible';
+      if (!result) return 'locked';
+      if (currentStepIndex > targetIndex) return 'completed';
+      if (step === 'comparisonqc') return 'accessible';
       return 'locked';
     }
     if (stepId === 'lightcurve') {
@@ -1584,7 +1322,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   const handleAddComparison = (position: PixelCoordinate) => {
     let nextKey: StarKey | null = null;
     setComparisonStars((current) => {
-      if (current.length >= 3) return current;
+      if (current.length >= MAX_COMPARISON_STARS) return current;
       if (
         targetComparisonCollisionPosition &&
         arePixelPositionsNear(position, targetComparisonCollisionPosition)
@@ -1595,7 +1333,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
         return current;
       }
       const next = [...current, { position, aperture: { ...DEFAULT_APERTURE } }];
-      nextKey = `C${Math.min(next.length, 3)}` as StarKey;
+      nextKey = `C${next.length}` as StarKey;
       return next;
     });
     if (nextKey) {
@@ -1604,7 +1342,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   };
 
   const handleSelectStarFromCutout = (label: string) => {
-    if (label === 'T' || label === 'C1' || label === 'C2' || label === 'C3') {
+    if (label === 'T' || /^C\d+$/.test(label)) {
       setSelectedStar(label as StarKey);
     }
   };
@@ -1633,7 +1371,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   };
 
   const handleRecordAnswerChange = (questionId: string, value: unknown) => {
-    setRecordSaved(null);
+    setSubmittedRecord(null);
     setRecordAnswers((current) => ({
       ...current,
       [questionId]: value,
@@ -1691,8 +1429,8 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
           target_aperture: submissionTargetPosition
             ? toTransitApertureConfig(submissionTargetPosition, targetAperture)
             : null,
-          comparison_positions: comparisonStars.map((star) => star.position),
-          comparison_apertures: comparisonStars.map((star) =>
+          comparison_positions: persistedComparisonStars.map((star) => star.position),
+          comparison_apertures: persistedComparisonStars.map((star) =>
             toTransitApertureConfig(star.position, star.aperture)
           ),
           aperture: targetAperture,
@@ -1725,7 +1463,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
         },
         answers: recordAnswers,
       });
-      setRecordSaved(response);
+      setSubmittedRecord(response);
     } catch (error) {
       console.error('Failed to submit analysis record', error);
       setErrorMessage(
@@ -1736,8 +1474,31 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     }
   };
 
-  const handleRunPhotometry = async () => {
-    if (!preview) return;
+  const runTransitPhotometryForComparisons = async (
+    stars: ComparisonStar[],
+    nextStepAfterSuccess: TransitStep | null = null
+  ): Promise<TransitPhotometryResponse | null> => {
+    const photometryTargetPosition = effectiveTargetPosition ?? result?.target_position ?? null;
+
+    if (!activeObservationId || cutoutSizePx === null || !photometryTargetPosition) {
+      setErrorMessage('Missing cutout setup for transit photometry.');
+      return null;
+    }
+
+    const observationContext =
+      preview !== null
+        ? {
+            sector: preview.sector,
+            camera: preview.camera,
+            ccd: preview.ccd,
+          }
+        : activeObservation?.sector !== null && activeObservation?.sector !== undefined
+          ? {
+              sector: activeObservation.sector,
+              camera: activeObservation.camera ?? null,
+              ccd: activeObservation.ccd ?? null,
+            }
+          : undefined;
 
     setRunning(true);
     setErrorMessage(null);
@@ -1756,28 +1517,24 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       const response = await runTransitPhotometryStreaming(
         {
           target_id: target.id,
-          observation_id: preview.observation_id,
-          cutout_size_px: preview.cutout_size_px,
+          observation_id: activeObservationId,
+          cutout_size_px: cutoutSizePx,
           target_context: {
             ra: target.ra,
             dec: target.dec,
             period_days: target.period_days,
           },
-          observation_context: {
-            sector: preview.sector,
-            camera: preview.camera,
-            ccd: preview.ccd,
-          },
-          target_position: effectiveTargetPosition!,
-          comparison_positions: comparisonStars.map((cs) => cs.position),
+          observation_context: observationContext,
+          target_position: photometryTargetPosition,
+          comparison_positions: stars.map((cs) => cs.position),
           aperture_radius: targetAperture.apertureRadius,
           inner_annulus: targetAperture.innerAnnulus,
           outer_annulus: targetAperture.outerAnnulus,
           target_aperture: toTransitApertureConfig(
-            effectiveTargetPosition!,
+            photometryTargetPosition,
             targetAperture
           ),
-          comparison_apertures: comparisonStars.map((cs) =>
+          comparison_apertures: stars.map((cs) =>
             toTransitApertureConfig(cs.position, cs.aperture)
           ),
         },
@@ -1794,20 +1551,66 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
         message: 'Transit photometry complete.',
       });
       setResult(response);
+      if (nextStepAfterSuccess) {
+        replaceStep(nextStepAfterSuccess);
+      }
+      return response;
     } catch (error) {
       setProgress(0);
       setRunProgressEvent(null);
       if (error instanceof DOMException && error.name === 'AbortError') {
         setErrorMessage('Photometry stopped.');
-        return;
+        return null;
       }
       console.error('Transit photometry run failed', error);
       setErrorMessage(
         error instanceof Error ? error.message : 'Transit photometry failed.'
       );
+      return null;
     } finally {
       setRunning(false);
       if (runAbortRef.current === controller) runAbortRef.current = null;
+    }
+  };
+
+  const handleRunPhotometry = async () => {
+    await runTransitPhotometryForComparisons(comparisonStars);
+  };
+
+  const handleToggleQcComparison = (label: string) => {
+    setQcIncludedComparisonLabels((current) => {
+      if (current.includes(label)) {
+        return current.filter((item) => item !== label);
+      }
+      return [...current, label].sort((left, right) => {
+        const leftIndex = parseInt(left.slice(1), 10);
+        const rightIndex = parseInt(right.slice(1), 10);
+        return leftIndex - rightIndex;
+      });
+    });
+  };
+
+  const handleSelectAllQcComparisons = () => {
+    setQcIncludedComparisonLabels(comparisonDiagnostics.map((diagnostic) => diagnostic.label));
+  };
+
+  const handleApplyComparisonQc = async () => {
+    const retainedComparisons = comparisonStars.filter((_, index) =>
+      qcIncludedComparisonLabels.includes(`C${index + 1}`)
+    );
+    if (retainedComparisons.length === 0) {
+      setErrorMessage('Keep at least one comparison star before re-running photometry.');
+      return;
+    }
+
+    setProgress(0);
+    setRunProgressEvent(null);
+    const response = await runTransitPhotometryForComparisons(retainedComparisons, 'comparisonqc');
+    if (response) {
+      setFitResult(null);
+      suppressAnalysisInvalidationRef.current = true;
+      setComparisonStars(retainedComparisons);
+      setSelectedStar('T');
     }
   };
 
@@ -1821,62 +1624,26 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
 
   const handleReset = () => {
     clearPersistedWorkflow();
+    loadedRecordIdRef.current = null;
     analysisConfigSignatureRef.current = null;
     observedActiveObservationRef.current = undefined;
-    restoringSessionPreviewRef.current = false;
-    if (previewPollTimeoutRef.current) {
-      clearTimeout(previewPollTimeoutRef.current);
-      previewPollTimeoutRef.current = null;
-    }
-    const previewJobId = previewJobIdRef.current;
-    previewJobIdRef.current = null;
-    if (previewJobId) cancelTransitPreviewJob(previewJobId).catch(() => undefined);
-    framePreviewAbortRef.current?.abort();
-    runAbortRef.current?.abort();
-    setPreviewLoading(false);
-    setFramePreviewLoading(false);
-    setPreviewProgress(0);
-    setPreviewMessage(null);
-    setRunning(false);
-    setResult(null);
-    setProgress(0);
-    setRunProgressEvent(null);
-    setComparisonStars([]);
-    setTargetPositionOffset(null);
-    setTargetAperture({ ...DEFAULT_APERTURE });
-    setCutoutSizePx(null);
-    setPendingCutoutSizePx(35);
-    setPreview(null);
-    setSelectedFrameIndex(null);
-    setSelectedStar('T');
-    replaceStep('select');
-    setErrorMessage(null);
+    applyTransitInvalidation({ type: 'hard-reset' });
     setFoldEnabled(false);
     setFoldPeriod(null);
     setFoldT0(0);
-    setFitResult(null);
-    setFitting(false);
-    setFitDebugRequest(null);
-    setFitDebugLog([]);
     setFitLimbDarkening(false);
     setFitDataSource('bjd_window');
-    setBjdWindowStart(null);
-    setBjdWindowEnd(null);
     setFitWindowPhase(0.12);
     setFitBaselineOrder(0);
     setFitSigmaClipSigma(0.0);
     setFitSigmaClipIterations(0);
-    setRecordSaved(null);
-    setRecordTitle('');
-    setRecordAnswers((current) =>
-      recordTemplate ? buildInitialRecordAnswers(recordTemplate) : current
-    );
   };
 
   // Navigation
   const canGoNext =
     (step === 'select' && Boolean(preview) && comparisonStars.length > 0) ||
     (step === 'run' && Boolean(result)) ||
+    (step === 'comparisonqc' && Boolean(result) && !qcSelectionDirty) ||
     (step === 'lightcurve' && Boolean(result)) ||
     (step === 'transitfit' && Boolean(result));
   const canGoPrevious = currentStepIndex > 0;
@@ -1895,7 +1662,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   const handleFitTransit = async () => {
     if (!result) return;
     if (roiPoints.length < 20) {
-      setErrorMessage('The Step 3 BJD ROI retained too few points for transit fitting.');
+      setErrorMessage('The Step 4 ROI retained too few points for transit fitting.');
       return;
     }
     const fitPeriod =
@@ -1992,7 +1759,8 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       const responseModel =
         normalizedResponse.data_flux.length === normalizedResponse.residuals.length
           ? normalizedResponse.data_flux.map(
-              (value, index) => value - normalizedResponse.residuals[index]
+              (value: number, index: number) =>
+                value - normalizedResponse.residuals[index]
             )
           : [];
       setFitDebugLog((current) => [
@@ -2030,7 +1798,11 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     restoringSessionPreviewRef.current &&
     preview === null &&
     result !== null &&
-    (step === 'lightcurve' || step === 'transitfit' || step === 'record');
+    (
+      step === 'lightcurve' ||
+      step === 'transitfit' ||
+      step === 'record'
+    );
   const showBlockingPreviewLoad =
     previewLoading && preview === null && !canRenderRestoreStateWithoutPreview;
   const showRunProgress = running || (!result && progress > 0);
@@ -2075,12 +1847,17 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
   );
   const activeFitPreviewResult =
     fitResult && fitResult.preprocessing.fit_mode === fitDataSource ? fitResult : null;
+  const estimatedPhaseFoldT0 = estimatePhaseFoldReferenceT0(
+    roiPoints,
+    fitReferencePeriod,
+    roiMidpoint
+  );
   const phaseFoldReferenceT0 =
     Number.isFinite(foldT0) && foldT0 !== 0
       ? foldT0
       : activeFitPreviewResult?.preprocessing.fit_mode === 'phase_fold'
         ? activeFitPreviewResult.reference_t0
-        : roiMidpoint;
+        : estimatedPhaseFoldT0;
   const requestedFitWindowPhase =
     fitDataSource === 'phase_fold'
       ? fitWindowPhase
@@ -2093,7 +1870,6 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
             0.35,
           )
         : fitWindowPhase;
-  const comparisonDiagnostics = result?.comparison_diagnostics ?? [];
   const fitDisplayLightCurve =
     activeFitPreviewResult
       ? buildLightCurveFromFitResult(activeFitPreviewResult, fitDataSource)
@@ -2119,6 +1895,10 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
     activeFitPreviewResult
       ? buildFitOverlayCurve(activeFitPreviewResult, fitDataSource)
       : null;
+  const fitPreviewResiduals =
+    activeFitPreviewResult
+      ? buildFitResidualCurve(activeFitPreviewResult, fitDataSource)
+      : null;
   const fitResultModelFlux =
     fitResult && fitResult.data_flux.length === fitResult.residuals.length
       ? fitResult.data_flux.map((value, index) => value - fitResult.residuals[index])
@@ -2132,11 +1912,33 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
       : null;
 
   const selectedAperture = getSelectedAperture();
+  const draftStatusLabel =
+    draftSaveStatus === 'saving'
+      ? 'Saving draft...'
+      : draftSaveStatus === 'saved'
+        ? draftSavedAtLabel
+          ? `Saved ${draftSavedAtLabel}`
+          : 'Saved'
+        : draftSaveStatus === 'error'
+          ? 'Draft save failed'
+          : 'Draft session';
 
   return (
     <div className="lab-content transit-lab">
       {/* ===== SIDEBAR — changes per step ===== */}
       <div className="lab-sidebar">
+        {draftId && (
+          <div className={`transit-callout transit-draft-status ${draftSaveStatus}`}>
+            <div className="transit-draft-status-head">
+              <strong>Draft Session</strong>
+              <span>{draftStatusLabel}</span>
+            </div>
+            <div className="transit-draft-status-meta">
+              <span>{draftId}</span>
+              {seedRecordSummary && <span>Seed #{seedRecordSummary.submission_id}</span>}
+            </div>
+          </div>
+        )}
         {/* Sector list — always visible */}
         <div className="thumbnail-strip">
           <h4>Selected Sectors ({selectedObservations.length})</h4>
@@ -2174,7 +1976,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
               <h4>Stars</h4>
               <p className="hint">
                 Click a star below to adjust its aperture. Click the cutout image
-                to add comparison stars (max 3).
+                to add comparison stars (up to {MAX_COMPARISON_STARS}).
               </p>
               <div className="transit-star-list">
                 {/* Target star */}
@@ -2310,10 +2112,10 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                         key={star.tic_id}
                         className="transit-star-row tic-recommended"
                         onClick={() => {
-                          if (comparisonStars.length >= 3) return;
+                          if (comparisonStars.length >= MAX_COMPARISON_STARS) return;
                           handleAddComparison(star.pixel);
                         }}
-                        disabled={comparisonStars.length >= 3}
+                        disabled={comparisonStars.length >= MAX_COMPARISON_STARS}
                         title={`TIC ${star.tic_id} — Tmag ${star.tmag ?? '?'}`}
                       >
                         <span className="transit-star-badge tic">R</span>
@@ -2341,10 +2143,10 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                             key={star.tic_id}
                             className="transit-star-row"
                             onClick={() => {
-                              if (comparisonStars.length >= 3) return;
+                              if (comparisonStars.length >= MAX_COMPARISON_STARS) return;
                               handleAddComparison(star.pixel);
                             }}
-                            disabled={comparisonStars.length >= 3}
+                            disabled={comparisonStars.length >= MAX_COMPARISON_STARS}
                             title={`TIC ${star.tic_id} — Tmag ${star.tmag ?? '?'}${star.is_variable ? ' (variable)' : ''}`}
                           >
                             <span className={`transit-star-badge tic ${star.is_variable ? 'variable' : ''}`}>
@@ -2359,7 +2161,8 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                     </details>
                   )}
                 </div>
-                {comparisonStars.length < 3 && recommendedComparisonStars.length > 0 && (
+                {comparisonStars.length < MAX_COMPARISON_STARS &&
+                  recommendedComparisonStars.length > 0 && (
                   <button
                     className="btn-sm"
                     style={{ marginTop: 8, width: '100%' }}
@@ -2375,7 +2178,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                           arePixelPositionsNear(item.position, star.pixel)
                         );
                       });
-                      const slotsLeft = 3 - comparisonStars.length;
+                      const slotsLeft = MAX_COMPARISON_STARS - comparisonStars.length;
                       recommended.slice(0, slotsLeft).forEach((star) => {
                         handleAddComparison(star.pixel);
                       });
@@ -2421,14 +2224,99 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
           </div>
         )}
 
-        {/* Step 3 sidebar: BJD window selection */}
+        {/* Step 3 sidebar: Comparison QC */}
+        {step === 'comparisonqc' && (
+          <>
+            <div className="transit-controls-card">
+              <h4>Comparison QC</h4>
+              <p className="hint" style={{ marginTop: 10 }}>
+                후보 비교성을 점검하고, 품질이 떨어지는 별은 제외한 뒤 photometry를 다시
+                실행하세요. 최종 differential light curve는 여기서 살아남은 비교성
+                ensemble로 다시 계산됩니다.
+              </p>
+              <div className="transit-config-summary" style={{ marginTop: 12 }}>
+                <div className="transit-config-row">
+                  <span>Candidates</span>
+                  <span>{comparisonDiagnostics.length}</span>
+                </div>
+                <div className="transit-config-row">
+                  <span>Included</span>
+                  <span>{qcIncludedDiagnostics.length}</span>
+                </div>
+                <div className="transit-config-row">
+                  <span>Excluded</span>
+                  <span>{qcExcludedCount}</span>
+                </div>
+                {qcBestDiagnostic && (
+                  <div className="transit-config-row">
+                    <span>Best RMS</span>
+                    <span>
+                      {qcBestDiagnostic.label} · {qcBestDiagnostic.differential_rms.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="transit-toggle-row" style={{ marginTop: 10 }}>
+                <button
+                  className="btn-sm"
+                  type="button"
+                  onClick={handleSelectAllQcComparisons}
+                  disabled={comparisonDiagnostics.length === 0 || running}
+                >
+                  Select All
+                </button>
+                <button
+                  className="btn-primary btn-sm"
+                  type="button"
+                  onClick={() => {
+                    void handleApplyComparisonQc();
+                  }}
+                  disabled={!qcCanApply}
+                >
+                  Apply QC &amp; Re-run
+                </button>
+              </div>
+              {qcSelectionDirty && (
+                <div className="transit-callout" style={{ marginTop: 12 }}>
+                  QC selection changed. Apply QC and rerun photometry before moving on to ROI
+                  selection.
+                </div>
+              )}
+            </div>
+            {result && (
+              <div className="transit-controls-card">
+                <h4>Current Ensemble</h4>
+                <div className="transit-config-summary">
+                  <div className="transit-config-row">
+                    <span>Frames</span>
+                    <span>{result.frame_count.toLocaleString()}</span>
+                  </div>
+                  <div className="transit-config-row">
+                    <span>Median Target</span>
+                    <span>{result.target_median_flux.toFixed(1)}</span>
+                  </div>
+                  <div className="transit-config-row">
+                    <span>Median Comp</span>
+                    <span>{result.comparison_median_flux.toFixed(1)}</span>
+                  </div>
+                  <div className="transit-config-row">
+                    <span>Comp Stars</span>
+                    <span>{result.comparison_count}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Step 4 sidebar: BJD window selection */}
         {step === 'lightcurve' && (
           <>
             <div className="transit-controls-card">
               <h4>BJD Window</h4>
               <p className="hint" style={{ marginTop: 10 }}>
-                Step 3 plot에서 가로로 드래그해서 transit 구간을 고르세요.
-                숫자 입력은 보조용입니다. Step 3은 ROI만 정하고, Step 4에서 이 ROI를
+                Step 4 plot에서 가로로 드래그해서 transit 구간을 고르세요.
+                숫자 입력은 보조용입니다. Step 4는 ROI만 정하고, Step 5에서 이 ROI를
                 시간축 그대로 fit할지 phase-fold해서 fit할지 고릅니다.
               </p>
               {resolvedBjdWindow && (
@@ -2552,7 +2440,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
           </>
         )}
 
-        {/* Step 4 sidebar: Transit Fit controls */}
+        {/* Step 5 sidebar: Transit Fit controls */}
         {step === 'transitfit' && (
           <div className="transit-controls-card">
             <h4>Fit Settings</h4>
@@ -2572,7 +2460,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                 onClick={() => {
                   setFitDataSource('phase_fold');
                   if (hasResolvedBjdWindow && foldT0 === 0) {
-                    setFoldT0(roiMidpoint);
+                    setFoldT0(estimatedPhaseFoldT0);
                   }
                   setFitResult(null);
                 }}
@@ -2605,7 +2493,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
             {fitDataSource === 'phase_fold' ? (
               <>
                 <p className="hint" style={{ marginBottom: 12 }}>
-                  Step 3 ROI만 phase로 접어서 보여주고 fit합니다. ROI 안에 여러 transit가
+                  Step 4 ROI만 phase로 접어서 보여주고 fit합니다. ROI 안에 여러 transit가
                   있으면 같은 위상으로 겹쳐서 한 번에 맞춥니다.
                 </p>
                 {fitReferencePeriod ? (
@@ -2675,12 +2563,12 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                       type="button"
                       onClick={() => {
                         setFoldPeriod(target.period_days ?? result?.light_curve.period_days ?? null);
-                        setFoldT0(roiMidpoint);
+                        setFoldT0(estimatedPhaseFoldT0);
                         setFitWindowPhase(0.12);
                         setFitResult(null);
                       }}
                     >
-                      Reset To ROI Center
+                      Reset To Transit Center
                     </button>
                   </>
                 ) : (
@@ -2691,18 +2579,18 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
               </>
             ) : (
               <p className="hint" style={{ marginBottom: 12 }}>
-                Step 3 ROI를 BTJD 시간축 그대로 fit합니다. ROI가 넓어서 transit가 여러 개
+                Step 4 ROI를 BTJD 시간축 그대로 fit합니다. ROI가 넓어서 transit가 여러 개
                 들어가면, 접지 않고 각 이벤트를 원래 시간 간격대로 유지한 채 맞춥니다.
               </p>
             )}
             <div className="transit-callout" style={{ marginTop: 12 }}>
-              Step 4는 항상 Step 3에서 고른 같은 ROI 점열만 씁니다. 바뀌는 건 표시와
+              Step 5는 항상 Step 4에서 고른 같은 ROI 점열만 씁니다. 바뀌는 건 표시와
               fit 좌표계뿐이고, 소스 cadence 자체는 바뀌지 않습니다.
             </div>
             {fitDataSource === 'phase_fold' && hasResolvedBjdWindow && (
               <div className="transit-callout" style={{ marginTop: 12 }}>
-                Phase-fold preview의 기본 T₀는 현재 ROI 중심({phaseFoldReferenceT0.toFixed(6)})입니다.
-                필요하면 직접 수정할 수 있습니다.
+                Phase-fold preview의 기본 T₀는 ROI 중앙이 아니라 dip 중심 추정치
+                ({phaseFoldReferenceT0.toFixed(6)})를 씁니다. 필요하면 직접 수정할 수 있습니다.
               </div>
             )}
             {fitResult && (
@@ -2781,15 +2669,28 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                 Sign in with Google to submit this analysis into your archive history.
               </div>
             )}
-            {recordSaved ? (
+            {submittedRecord ? (
               <div className="transit-config-summary" style={{ marginTop: 12 }}>
                 <div className="transit-config-row">
                   <span>Submission</span>
-                  <span>#{recordSaved.submission_id}</span>
+                  <span>#{submittedRecord.submission_id}</span>
                 </div>
                 <div className="transit-config-row">
                   <span>Saved To</span>
-                  <span>{recordSaved.export_path}</span>
+                  <span>{submittedRecord.export_path}</span>
+                </div>
+                {seedRecordSummary && (
+                  <div className="transit-config-row">
+                    <span>Draft Seed</span>
+                    <span>Record #{seedRecordSummary.submission_id}</span>
+                  </div>
+                )}
+              </div>
+            ) : seedRecordSummary ? (
+              <div className="transit-config-summary" style={{ marginTop: 12 }}>
+                <div className="transit-config-row">
+                  <span>Draft Seed</span>
+                  <span>Record #{seedRecordSummary.submission_id}</span>
                 </div>
               </div>
             ) : (
@@ -3003,7 +2904,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
         )}
 
         {/* STEP 2: Run Photometry */}
-        {step === 'run' && preview && (
+        {step === 'run' && cutoutSizePx !== null && (
           <div className="transit-panel">
             <div className="transit-panel-header">
               <div>
@@ -3022,86 +2923,294 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
               )}
             </div>
 
-            <div className="transit-summary-grid">
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Target</span>
-                <strong>
-                  ({effectiveTargetPosition!.x.toFixed(1)},{' '}
-                  {effectiveTargetPosition!.y.toFixed(1)})
-                </strong>
+            {effectiveTargetPosition ? (
+              <>
+                <div className="transit-summary-grid">
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Target</span>
+                    <strong>
+                      ({effectiveTargetPosition.x.toFixed(1)},{' '}
+                      {effectiveTargetPosition.y.toFixed(1)})
+                    </strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Comparisons</span>
+                    <strong>{comparisonStars.length}</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Field</span>
+                    <strong>{cutoutSizePx} px</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Cadences</span>
+                    <strong>
+                      {(preview?.frame_count ?? activeObservation?.frame_count ?? 0).toLocaleString()}
+                    </strong>
+                  </div>
+                </div>
+
+                {showRunProgress && (
+                  <div className="transit-progress-wrapper">
+                    <div className="transit-progress-bar">
+                      <div
+                        className={`transit-progress-fill ${progress >= 100 ? 'done' : ''}`}
+                        style={{ width: `${progress}%` }}
+                      />
+                    </div>
+                    <span className="transit-progress-label">
+                      {progress >= 100
+                        ? 'Complete'
+                        : running
+                          ? `${Math.round(progress)}% — ${
+                              runProgressEvent?.message ?? 'Running transit photometry...'
+                            }`
+                          : `${Math.round(progress)}%`}
+                    </span>
+                  </div>
+                )}
+
+                {result && (
+                  <div className="transit-run-done">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green, #4ade80)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                      <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                    <span>
+                      Photometry complete — {result.frame_count.toLocaleString()} frames processed.
+                    </span>
+                  </div>
+                )}
+
+                <div className="transit-run-actions">
+                  {!running && !result && (
+                    <button type="button" className="btn-primary" onClick={handleRunPhotometry}>
+                      Run Photometry
+                    </button>
+                  )}
+                  {running && (
+                    <button type="button" className="btn-danger" onClick={handleStop}>
+                      Stop
+                    </button>
+                  )}
+                  {result && !running && (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => {
+                        setResult(null);
+                        setProgress(0);
+                        setRunProgressEvent(null);
+                        handleRunPhotometry();
+                      }}
+                    >
+                      Re-run
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="transit-empty-state">
+                {previewLoading
+                  ? 'Restoring the Step 1 cutout and target position...'
+                  : 'Missing Step 1 cutout context. Go back to Step 1 and reload the cutout before running photometry.'}
               </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Comparisons</span>
-                <strong>{comparisonStars.length}</strong>
-              </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Field</span>
-                <strong>{cutoutSizePx} px</strong>
-              </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Cadences</span>
-                <strong>{preview.frame_count.toLocaleString()}</strong>
+            )}
+
+            <div className="transit-step-nav">
+              <button type="button" className="btn-sm" onClick={handleReset}>
+                Reset
+              </button>
+              <div className="transit-step-nav-actions">
+                <button type="button" className="btn-sm" onClick={handlePrevious}>
+                  Previous
+                </button>
+                <button type="button" className="btn-primary" disabled={!canGoNext} onClick={handleNext}>
+                  Next: Comparison QC
+                </button>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Progress Bar */}
-            {showRunProgress && (
-              <div className="transit-progress-wrapper">
-                <div className="transit-progress-bar">
-                  <div
-                    className={`transit-progress-fill ${progress >= 100 ? 'done' : ''}`}
-                    style={{ width: `${progress}%` }}
-                  />
+        {/* STEP 3: Comparison QC */}
+        {step === 'comparisonqc' && (result || running) && (
+          <>
+            <div className="transit-panel">
+              <div className="transit-panel-header">
+                <div>
+                  <h3>3. Comparison QC — {target.name}</h3>
+                  <p className="hint">
+                    각 비교성의 target/comparison pair를 점검하고, 품질이 떨어지는 별은
+                    제외한 뒤 ensemble photometry를 다시 계산하세요.
+                  </p>
                 </div>
-                <span className="transit-progress-label">
-                  {progress >= 100
-                    ? 'Complete'
-                    : running
-                      ? `${Math.round(progress)}% — ${
-                          runProgressEvent?.message ?? 'Running transit photometry...'
-                        }`
-                      : `${Math.round(progress)}%`}
-                </span>
               </div>
-            )}
 
-            {result && (
-              <div className="transit-run-done">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green, #4ade80)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
-                <span>
-                  Photometry complete — {result.frame_count.toLocaleString()} frames processed.
-                </span>
-              </div>
-            )}
-
-            <div className="transit-run-actions">
-              {!running && !result && (
-                <button type="button" className="btn-primary" onClick={handleRunPhotometry}>
-                  Run Photometry
-                </button>
-              )}
               {running && (
-                <button type="button" className="btn-danger" onClick={handleStop}>
-                  Stop
-                </button>
+                <div className="transit-progress-card" style={{ marginBottom: 16 }}>
+                  <div className="transit-progress-head">
+                    <strong>Re-running photometry with QC selection</strong>
+                    <span>{Math.round(progress)}%</span>
+                  </div>
+                  <div className="transit-progress-bar">
+                    <div
+                      className={`transit-progress-fill ${progress >= 100 ? 'done' : ''}`}
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <p className="transit-progress-label">
+                    {runProgressEvent?.message ?? 'Rebuilding the comparison ensemble...'}
+                  </p>
+                </div>
               )}
-              {result && !running && (
+
+              {result ? (
+                <>
+                  <div className="transit-summary-grid">
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Candidates</span>
+                      <strong>{comparisonDiagnostics.length}</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Included</span>
+                      <strong>{qcIncludedDiagnostics.length}</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Excluded</span>
+                      <strong>{qcExcludedCount}</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Current Ensemble</span>
+                      <strong>{result.comparison_count}</strong>
+                    </div>
+                  </div>
+
+                  {qcSelectionDirty && (
+                    <div className="transit-callout" style={{ marginBottom: 16 }}>
+                      QC selection changed. Apply QC &amp; Re-run to rebuild the differential light
+                      curve before moving on to ROI selection.
+                    </div>
+                  )}
+
+                  {comparisonDiagnostics.length > 0 ? (
+                    <>
+                      <div className="transit-comparison-diagnostics">
+                        {comparisonDiagnostics.map((diagnostic) => {
+                          const isActive =
+                            diagnostic.label === selectedComparisonDiagnosticData?.label;
+                          const isIncluded = qcIncludedComparisonLabels.includes(diagnostic.label);
+                          return (
+                            <div
+                              key={diagnostic.label}
+                              className={`transit-comparison-diagnostic-card ${
+                                isActive ? 'active' : ''
+                              }`}
+                            >
+                              <div className="transit-comparison-diagnostic-head">
+                                <strong>{diagnostic.label}</strong>
+                                <span>{(diagnostic.ensemble_weight * 100).toFixed(1)}%</span>
+                              </div>
+                              <div className="transit-comparison-diagnostic-grid">
+                                <span>Frames</span>
+                                <span>{diagnostic.valid_frame_count.toLocaleString()}</span>
+                                <span>RMS</span>
+                                <span>{diagnostic.differential_rms.toFixed(4)}</span>
+                                <span>MAD</span>
+                                <span>{diagnostic.differential_mad.toFixed(4)}</span>
+                                <span>Median Flux</span>
+                                <span>{diagnostic.median_flux.toLocaleString()}</span>
+                              </div>
+                              <div className="transit-toggle-row" style={{ marginTop: 10 }}>
+                                <button
+                                  type="button"
+                                  className={`btn-sm ${isActive ? 'active' : ''}`}
+                                  onClick={() => setSelectedComparisonDiagnostic(diagnostic.label)}
+                                >
+                                  Inspect
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`btn-sm ${isIncluded ? 'active' : ''}`}
+                                  onClick={() => handleToggleQcComparison(diagnostic.label)}
+                                >
+                                  {isIncluded ? 'Included' : 'Excluded'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {selectedComparisonDiagnosticData && (
+                        <>
+                          <div className="transit-summary-grid">
+                            <div className="transit-summary-card">
+                              <span className="transit-summary-label">Selected Pair</span>
+                              <strong>T / {selectedComparisonDiagnosticData.label}</strong>
+                            </div>
+                            <div className="transit-summary-card">
+                              <span className="transit-summary-label">Status</span>
+                              <strong>
+                                {qcIncludedComparisonLabels.includes(
+                                  selectedComparisonDiagnosticData.label
+                                )
+                                  ? 'Included'
+                                  : 'Excluded'}
+                              </strong>
+                            </div>
+                            <div className="transit-summary-card">
+                              <span className="transit-summary-label">Pair RMS</span>
+                              <strong>
+                                {selectedComparisonDiagnosticData.differential_rms.toFixed(4)}
+                              </strong>
+                            </div>
+                            <div className="transit-summary-card">
+                              <span className="transit-summary-label">Pair MAD</span>
+                              <strong>
+                                {selectedComparisonDiagnosticData.differential_mad.toFixed(4)}
+                              </strong>
+                            </div>
+                          </div>
+
+                          <LightCurvePlot
+                            data={selectedComparisonDiagnosticData.light_curve}
+                            targetName={`${target.name} vs ${selectedComparisonDiagnosticData.label}`}
+                          />
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <div className="transit-empty-state">
+                      Comparison diagnostics are not available for this photometry run.
+                    </div>
+                  )}
+                </>
+              ) : !running ? (
+                <div className="transit-empty-state">
+                  Comparison diagnostics are not available for this photometry run.
+                </div>
+              ) : null}
+
+              <div className="transit-run-actions" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={handleSelectAllQcComparisons}
+                  disabled={comparisonDiagnostics.length === 0 || running}
+                >
+                  Select All
+                </button>
                 <button
                   type="button"
                   className="btn-primary"
                   onClick={() => {
-                    setResult(null);
-                    setProgress(0);
-                    setRunProgressEvent(null);
-                    handleRunPhotometry();
+                    void handleApplyComparisonQc();
                   }}
+                  disabled={!qcCanApply}
                 >
-                  Re-run
+                  Apply QC &amp; Re-run
                 </button>
-              )}
+              </div>
             </div>
 
             <div className="transit-step-nav">
@@ -3117,16 +3226,16 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                 </button>
               </div>
             </div>
-          </div>
+          </>
         )}
 
-        {/* STEP 3: Light Curve */}
+        {/* STEP 4: Light Curve */}
         {step === 'lightcurve' && result && (
           <>
             <div className="transit-panel">
               <div className="transit-panel-header">
                 <div>
-                  <h3>3. Differential Light Curve — {target.name}</h3>
+                  <h3>4. Differential Light Curve & ROI — {target.name}</h3>
                   <p className="hint">
                     Sector {result.sector} &middot;{' '}
                     F<sub>target</sub> / F<sub>comp</sub>, normalized to unity.
@@ -3169,80 +3278,6 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
               }}
             />
 
-            {comparisonDiagnostics.length > 0 && (
-              <div className="transit-panel">
-                <div className="transit-panel-header">
-                  <div>
-                    <h3>Comparison QC</h3>
-                    <p className="hint">
-                      Inspect each target/comparison pair before trusting the combined
-                      ensemble curve. Lower RMS and MAD usually indicate a steadier
-                      comparison star.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="transit-comparison-diagnostics">
-                  {comparisonDiagnostics.map((diagnostic) => {
-                    const isActive = diagnostic.label === selectedComparisonDiagnosticData?.label;
-                    return (
-                      <button
-                        key={diagnostic.label}
-                        type="button"
-                        className={`transit-comparison-diagnostic-card ${isActive ? 'active' : ''}`}
-                        onClick={() => setSelectedComparisonDiagnostic(diagnostic.label)}
-                      >
-                        <div className="transit-comparison-diagnostic-head">
-                          <strong>{diagnostic.label}</strong>
-                          <span>{(diagnostic.ensemble_weight * 100).toFixed(1)}%</span>
-                        </div>
-                        <div className="transit-comparison-diagnostic-grid">
-                          <span>Frames</span>
-                          <span>{diagnostic.valid_frame_count.toLocaleString()}</span>
-                          <span>RMS</span>
-                          <span>{diagnostic.differential_rms.toFixed(4)}</span>
-                          <span>MAD</span>
-                          <span>{diagnostic.differential_mad.toFixed(4)}</span>
-                          <span>Median Flux</span>
-                          <span>{diagnostic.median_flux.toLocaleString()}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {selectedComparisonDiagnosticData && (
-                  <>
-                    <div className="transit-summary-grid">
-                      <div className="transit-summary-card">
-                        <span className="transit-summary-label">Selected Pair</span>
-                        <strong>T / {selectedComparisonDiagnosticData.label}</strong>
-                      </div>
-                      <div className="transit-summary-card">
-                        <span className="transit-summary-label">Weight</span>
-                        <strong>
-                          {(selectedComparisonDiagnosticData.ensemble_weight * 100).toFixed(1)}%
-                        </strong>
-                      </div>
-                      <div className="transit-summary-card">
-                        <span className="transit-summary-label">Pair RMS</span>
-                        <strong>{selectedComparisonDiagnosticData.differential_rms.toFixed(4)}</strong>
-                      </div>
-                      <div className="transit-summary-card">
-                        <span className="transit-summary-label">Pair MAD</span>
-                        <strong>{selectedComparisonDiagnosticData.differential_mad.toFixed(4)}</strong>
-                      </div>
-                    </div>
-
-                    <LightCurvePlot
-                      data={selectedComparisonDiagnosticData.light_curve}
-                      targetName={`${target.name} vs ${selectedComparisonDiagnosticData.label}`}
-                    />
-                  </>
-                )}
-              </div>
-            )}
-
             <div className="transit-step-nav">
               <button type="button" className="btn-sm" onClick={handleReset}>
                 Reset
@@ -3259,17 +3294,17 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
           </>
         )}
 
-        {/* STEP 4: Transit Fit */}
+        {/* STEP 5: Transit Fit */}
         {step === 'transitfit' && result && (
           <>
             <div className="transit-panel">
               <div className="transit-panel-header">
                 <div>
-                  <h3>4. Transit Model Fit — {target.name}</h3>
+                  <h3>5. Transit Model Fit — {target.name}</h3>
                   <p className="hint">
                     {fitDataSource === 'phase_fold'
-                      ? 'Phase-fold the Step 3 ROI and fit that folded segment.'
-                      : 'Fit a transit model on the Step 3 ROI without folding the time axis.'}
+                      ? 'Phase-fold the Step 4 ROI and fit that folded segment.'
+                      : 'Fit a transit model on the Step 4 ROI without folding the time axis.'}
                     {fitReferencePeriod && ` P = ${fitReferencePeriod} d`}
                     {fitDataSource === 'phase_fold' ? `, T₀ = ${phaseFoldReferenceT0} d` : ''}
                   </p>
@@ -3278,8 +3313,9 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
 
               <div className="transit-callout">
                 Black points are the exact normalized samples used in the fit. Red is the
-                best-fit transit model on that same axis, so Step 4 now shows one ROI with
-                two view modes instead of mixing Step 3 and Step 4 coordinates.
+                best-fit transit model on that same axis, so Step 5 now shows one ROI with
+                two view modes instead of mixing Step 4 light-curve selection and Step 5
+                fit coordinates.
               </div>
 
               {fitDataSource === 'phase_fold' && !fitReferencePeriod && (
@@ -3290,20 +3326,20 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
 
               {!hasResolvedBjdWindow && (
                 <div className="transit-callout">
-                  Step 3에서 먼저 BJD transit segment를 정해야 Step 4 fit을 실행할 수 있습니다.
+                  Step 4에서 먼저 BJD transit segment를 정해야 Step 5 fit을 실행할 수 있습니다.
                 </div>
               )}
 
               {fitDataSource === 'bjd_window' && !hasResolvedBjdWindow && (
                 <div className="transit-callout">
                   Define a valid BJD start and end time before fitting. The selected
-                  window is highlighted on the Step 3 BJD light curve.
+                  window is highlighted on the Step 4 BJD light curve.
                 </div>
               )}
 
               {hasResolvedBjdWindow && fitWindowPointCount > 0 && fitWindowPointCount < 20 && (
                 <div className="transit-callout">
-                  The Step 3 ROI currently contains only {fitWindowPointCount} points. Select a
+                  The Step 4 ROI currently contains only {fitWindowPointCount} points. Select a
                   wider BJD window before fitting.
                 </div>
               )}
@@ -3319,8 +3355,11 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                 <div className="transit-panel" style={{ marginBottom: 16 }}>
                   <LightCurvePlot
                     data={fitDisplayLightCurve}
-                    targetName={`${target.name} Fit Preview`}
+                    targetName={target.name}
                     overlayCurve={fitPreviewOverlay}
+                    residualCurve={fitPreviewResiduals}
+                    analystLabel={user?.email ?? null}
+                    variant={activeFitPreviewResult ? 'fit-preview' : 'default'}
                   />
                 </div>
               )}
@@ -3328,10 +3367,10 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
               {(fitDebugRequest || fitResult || fitDebugLog.length > 0) && (
                 <details className="transit-panel" style={{ marginBottom: 16 }}>
                   <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: 12 }}>
-                    Step 4 Debug
+                    Step 5 Debug
                   </summary>
                   <p className="hint" style={{ marginTop: 0, marginBottom: 12 }}>
-                    Step 4가 실제로 어떤 ROI와 파라미터를 backend에 보냈고, 무엇을
+                    Step 5가 실제로 어떤 ROI와 파라미터를 backend에 보냈고, 무엇을
                     돌려받았는지 그대로 보여줍니다.
                   </p>
 
@@ -3554,12 +3593,12 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                   <p className="transit-progress-label">
                     {!fitProgress || fitProgress.stage === 'init'
                       ? 'Preparing data...'
-                      : fitProgress.stage === 'phase_fold'
-                        ? fitDataSource === 'bjd_window'
-                          ? 'Selecting BJD window and aligning the transit center...'
-                          : 'Phase folding & dip detection...'
+                        : fitProgress.stage === 'phase_fold'
+                          ? fitDataSource === 'bjd_window'
+                            ? 'Selecting BJD window and aligning the transit center...'
+                            : 'Phase folding & dip detection...'
                         : fitProgress.stage === 'preprocess'
-                          ? 'Normalizing the Step 3 ROI and preparing the model...'
+                          ? 'Normalizing the Step 4 ROI and preparing the model...'
                         : fitProgress.stage === 'least_squares'
                           ? 'Initial optimization (least squares)...'
                           : fitProgress.stage === 'mcmc'
@@ -3577,7 +3616,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                     Method used: {fitEngineLabel}
                   </div>
                   <div className="transit-callout">
-                    The fitted transit model is drawn directly on the current Step 4 ROI view.
+                    The fitted transit model is drawn directly on the current Step 5 ROI view.
                   </div>
                   <div className="transit-config-summary">
                     <div className="transit-config-row">
@@ -3640,7 +3679,7 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
           <div className="transit-panel">
             <div className="transit-panel-header">
               <div>
-                <h3>5. Record This Analysis</h3>
+                <h3>6. Record This Analysis</h3>
                 <p className="hint">
                   Turn this run into a reusable archive record. The form definition comes
                   from a JSON template, so the questions can be edited without changing
@@ -3950,14 +3989,14 @@ export function TransitLab({ target, observations, recordId = null }: TransitLab
                   })}
                 </div>
 
-                {recordSaved && (
+                {submittedRecord && (
                   <div className="transit-run-done">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green, #4ade80)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                       <polyline points="22 4 12 14.01 9 11.01" />
                     </svg>
                     <span>
-                      Saved as record #{recordSaved.submission_id} to {recordSaved.export_path}.
+                      Saved as record #{submittedRecord.submission_id} to {submittedRecord.export_path}.
                     </span>
                   </div>
                 )}

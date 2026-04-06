@@ -58,3 +58,27 @@ export interface RecordListItem {
   created_at: string;
   payload: Record<string, unknown>;
 }
+
+export interface WorkflowDraftRequest {
+  workflow: string;
+  target_id: string;
+  title?: string | null;
+  seed_record_id?: number | null;
+  status?: 'active' | 'archived';
+  workflow_version?: number;
+  envelope: Record<string, unknown>;
+}
+
+export interface WorkflowDraftItem {
+  draft_id: string;
+  workflow: string;
+  target_id: string;
+  title?: string | null;
+  seed_record_id?: number | null;
+  status: 'active' | 'archived';
+  workflow_version: number;
+  envelope: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  last_opened_at?: string | null;
+}

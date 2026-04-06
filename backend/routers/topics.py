@@ -7,7 +7,7 @@ router = APIRouter(tags=["topics"])
 TOPICS = [
     Topic(
         id="eclipsing_binary",
-        name="식현상 탐구 (Eclipsing Binaries)",
+        name="식쌍성 탐구 (Eclipsing Binaries)",
         description="식쌍성의 광도곡선을 분석하여 공전 주기와 식 깊이를 탐구합니다.",
         icon="🌑",
         target_count=3,

@@ -1,0 +1,17 @@
+.git
+.gitignore
+.codex
+
+backend/.env
+backend/easwa.db
+backend/submissions
+backend/__pycache__
+
+frontend/node_modules
+frontend/dist
+
+tests/__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd

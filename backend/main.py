@@ -12,7 +12,7 @@ from config import (
     SESSION_COOKIE_SECURE,
     SESSION_SECRET,
 )
-from routers import topics, targets, observations, photometry, lightcurve, transit, auth, records
+from routers import topics, targets, observations, photometry, lightcurve, transit, auth, records, drafts
 
 app = FastAPI(title="EASWA API", version="0.1.0")
 
@@ -38,6 +38,7 @@ app.include_router(photometry.router, prefix="/api")
 app.include_router(lightcurve.router, prefix="/api")
 app.include_router(transit.router, prefix="/api")
 app.include_router(records.router, prefix="/api")
+app.include_router(drafts.router, prefix="/api")
 
 
 @app.get("/api/health")

@@ -4,6 +4,7 @@ import { SkyExplorer } from './components/sky/SkyExplorer';
 import { TargetDetail } from './components/detail/TargetDetail';
 import { LabView } from './components/lab/LabView';
 import { MyAnalyses } from './components/pages/MyAnalyses';
+import { RecordDetail } from './components/pages/RecordDetail';
 import { Settings } from './components/pages/Settings';
 
 export const router = createBrowserRouter([
@@ -14,6 +15,7 @@ export const router = createBrowserRouter([
       { path: '/target/:targetId', element: <TargetDetail /> },
       { path: '/lab/:targetId', element: <LabView /> },
       { path: '/my', element: <MyAnalyses /> },
+      { path: '/records/:recordId', element: <RecordDetail /> },
       { path: '/settings', element: <Settings /> },
     ],
   },

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { fetchTarget, fetchObservations, runPhotometry, buildLightCurve } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
+import { useAuthStore } from '../../stores/useAuthStore';
+import { useWorkflowDraftRoute } from '../../hooks/useWorkflowDraftRoute';
 import { ThumbnailStrip } from './ThumbnailStrip';
 import { ParamsPanel } from './ParamsPanel';
 import { PhotometryResult } from './PhotometryResult';
@@ -16,7 +18,6 @@ import { buildDssPreviewUrl } from '../../utils/surveys';
 
 export function LabView() {
   const { targetId } = useParams<{ targetId: string }>();
-  const [searchParams] = useSearchParams();
   const [target, setTarget] = useState<Target | null>(null);
   const [observations, setObservations] = useState<Observation[]>([]);
   const [measurements, setMeasurements] = useState<PhotometryMeasurement[]>([]);
@@ -29,6 +30,19 @@ export function LabView() {
   const aperture = useAppStore((s) => s.apertureRadius);
   const inner = useAppStore((s) => s.innerAnnulus);
   const outer = useAppStore((s) => s.outerAnnulus);
+  const user = useAuthStore((s) => s.user);
+  const isTransitTarget = target?.topic_id === 'exoplanet_transit';
+  const {
+    draftId: parsedDraftId,
+    seedRecordId: parsedSeedRecordId,
+    draftRestoreReady,
+  } = useWorkflowDraftRoute({
+    workflowId: 'transit_lab',
+    subjectId: targetId,
+    enableDrafts: Boolean(isTransitTarget),
+    userPresent: Boolean(user),
+    onError: setErrorMessage,
+  });
 
   useEffect(() => {
     if (!targetId) return;
@@ -110,11 +124,10 @@ export function LabView() {
     return <div className="loading">Loading...</div>;
   }
 
-  const isTransitTarget = target.topic_id === 'exoplanet_transit';
-  const recordId = searchParams.get('record');
-  const parsedRecordId = recordId ? Number(recordId) : null;
-
   if (isTransitTarget) {
+    if (!draftRestoreReady) {
+      return <div className="loading">Restoring draft...</div>;
+    }
     return (
       <div className="lab-view">
         <div className="lab-header">
@@ -140,7 +153,8 @@ export function LabView() {
         <TransitLab
           target={target}
           observations={observations}
-          recordId={parsedRecordId !== null && Number.isFinite(parsedRecordId) ? parsedRecordId : null}
+          draftId={parsedDraftId}
+          seedRecordId={parsedSeedRecordId}
         />
       </div>
     );
