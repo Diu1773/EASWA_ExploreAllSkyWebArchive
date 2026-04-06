@@ -37,7 +37,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 BASE_URL = os.getenv("EASWA_BASE_URL", "http://localhost:5895")
 _parsed_base_url = urlparse(BASE_URL)
 _is_local_base_url = _parsed_base_url.hostname in {"localhost", "127.0.0.1"}
-_uses_dev_runtime_defaults = DEBUG
+_uses_dev_runtime_defaults = DEBUG or _is_local_base_url
 
 _session_secret = os.getenv("EASWA_SESSION_SECRET", "").strip()
 if _session_secret:
