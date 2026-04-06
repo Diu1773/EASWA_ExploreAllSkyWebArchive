@@ -76,7 +76,7 @@ const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
   { id: 'record', label: 'Record Result', number: 6 },
 ];
 
-const CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99] as const;
+const CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45] as const;
 
 const DEFAULT_APERTURE: ApertureParams = {
   apertureRadius: 2.5,

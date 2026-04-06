@@ -11,6 +11,8 @@ services:
     envVars:
       - key: EASWA_DEBUG
         value: "false"
+      - key: EASWA_TRANSIT_MAX_CUTOUT_SIZE_PX
+        value: "45"
       - key: EASWA_TRANSIT_CUTOUT_DISK_CACHE_ENABLED
         value: "false"
       - key: EASWA_SESSION_SECRET

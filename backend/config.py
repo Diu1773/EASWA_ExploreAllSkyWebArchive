@@ -109,6 +109,13 @@ TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS = max(
         1 if _uses_dev_runtime_defaults else 0,
     ),
 )
+TRANSIT_MAX_CUTOUT_SIZE_PX = max(
+    30,
+    _parse_int(
+        "EASWA_TRANSIT_MAX_CUTOUT_SIZE_PX",
+        99 if _uses_dev_runtime_defaults else 45,
+    ),
+)
 TRANSIT_CUTOUT_DISK_CACHE_ENABLED = _parse_bool(
     "EASWA_TRANSIT_CUTOUT_DISK_CACHE_ENABLED",
     _uses_dev_runtime_defaults,
