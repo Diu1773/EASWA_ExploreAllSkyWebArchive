@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 from adapters.transit_archive import archive as transit_archive
 from config import (
+    TRANSIT_CUTOUT_DISK_CACHE_DIR,
+    TRANSIT_CUTOUT_DISK_CACHE_ENABLED,
     TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS,
     TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES,
     TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS,
@@ -62,7 +64,11 @@ _CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS
 _CUTOUT_CACHE_MAX_BYTES = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES
 _HOT_CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS
 _HOT_CUTOUT_CACHE_TTL_SECONDS = 20 * 60
-_DISK_CUTOUT_CACHE_DIR = Path(tempfile.gettempdir()) / "easwa_tesscut_cache"
+_DISK_CUTOUT_CACHE_DIR = (
+    Path(TRANSIT_CUTOUT_DISK_CACHE_DIR)
+    if TRANSIT_CUTOUT_DISK_CACHE_DIR
+    else Path(tempfile.gettempdir()) / "easwa_tesscut_cache"
+)
 _TIC_EDGE_MARGIN_PX = 6.0
 _TIC_MIN_LOCAL_COVERAGE = 0.85
 _TIC_MIN_SIGNAL_SIGMA = 3.0
@@ -128,6 +134,10 @@ def _normalize_cutout_size(size_px: int | None) -> int:
 
     requested = int(size_px)
     return min(_ALLOWED_CUTOUT_SIZES_PX, key=lambda allowed: abs(allowed - requested))
+
+
+def _is_disk_cutout_cache_enabled() -> bool:
+    return TRANSIT_CUTOUT_DISK_CACHE_ENABLED
 
 
 def create_preview_job(
@@ -952,7 +962,7 @@ def _load_cutout_dataset(
             return hot_entry[1]
 
     cached_fits_path = _disk_cutout_cache_path(cache_key)
-    if cached_fits_path.exists():
+    if cached_fits_path is not None and cached_fits_path.exists():
         _notify_progress(progress_callback, 0.12, "Loading cached TESS cutout from local disk.")
         try:
             dataset = _dataset_from_fits_path(
@@ -1023,6 +1033,7 @@ def _load_cutout_dataset(
 
         _notify_progress(progress_callback, 0.82, "Extracting FITS data from cutout ZIP.")
         _extract_disk_cutout_cache(temp_zip_path, cached_fits_path)
+        fits_path = cached_fits_path if cached_fits_path is not None else _extract_temp_fits_from_zip(temp_zip_path)
         dataset = _dataset_from_fits_path(
             target_id=target_id,
             observation_id=observation_id,
@@ -1033,7 +1044,7 @@ def _load_cutout_dataset(
             cutout_url=cutout_url,
             ra=ra,
             dec=dec,
-            fits_path=cached_fits_path,
+            fits_path=fits_path,
             progress_callback=progress_callback,
         )
         _store_cutout_dataset(cache_key, dataset)
@@ -1041,6 +1052,12 @@ def _load_cutout_dataset(
     finally:
         if temp_zip_path is not None:
             temp_zip_path.unlink(missing_ok=True)
+        if not _is_disk_cutout_cache_enabled():
+            try:
+                if 'fits_path' in locals():
+                    Path(fits_path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _dataset_from_fits_path(
@@ -1103,13 +1120,29 @@ def _dataset_from_fits_path(
     )
 
 
-def _disk_cutout_cache_path(cache_key: tuple[str, str, int, int]) -> Path:
+def _disk_cutout_cache_path(cache_key: tuple[str, str, int, int]) -> Path | None:
+    if not _is_disk_cutout_cache_enabled():
+        return None
     target_id, observation_id, sector, size_px = cache_key
     filename = f"{target_id}__{observation_id}__s{sector:04d}__{size_px}px.fits"
     return _DISK_CUTOUT_CACHE_DIR / filename
 
 
-def _extract_disk_cutout_cache(zip_path: Path, cache_path: Path) -> None:
+def _extract_temp_fits_from_zip(zip_path: Path) -> Path:
+    with zipfile.ZipFile(zip_path) as archive_file:
+        fits_name = next(name for name in archive_file.namelist() if name.lower().endswith(".fits"))
+        with archive_file.open(fits_name) as source, tempfile.NamedTemporaryFile(
+            suffix=".fits",
+            delete=False,
+        ) as temp_fits_file:
+            temp_path = Path(temp_fits_file.name)
+            shutil.copyfileobj(source, temp_fits_file)
+    return temp_path
+
+
+def _extract_disk_cutout_cache(zip_path: Path, cache_path: Path | None) -> None:
+    if cache_path is None or not _is_disk_cutout_cache_enabled():
+        return
     try:
         _DISK_CUTOUT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         if cache_path.exists():

@@ -310,3 +310,13 @@ def test_load_cutout_dataset_reuses_recent_oversized_cutout(monkeypatch):
     )
 
     assert reused is dataset
+
+
+def test_disk_cutout_cache_path_disabled_returns_none(monkeypatch):
+    monkeypatch.setattr(transit_service, "_is_disk_cutout_cache_enabled", lambda: False)
+
+    path = transit_service._disk_cutout_cache_path(
+        ("wasp_52_b", "wasp_52_b_sector_0042", 42, 35)
+    )
+
+    assert path is None
