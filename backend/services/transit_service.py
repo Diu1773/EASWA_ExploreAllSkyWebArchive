@@ -36,6 +36,7 @@ from config import (
     TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS,
     TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES,
     TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS,
+    TRANSIT_CUTOUT_STAGE_DIR,
     TRANSIT_PREVIEW_JOB_MAX_ITEMS,
     TRANSIT_PREVIEW_JOB_TTL_SECONDS,
     TRANSIT_PREVIEW_WORKERS,
@@ -64,11 +65,18 @@ _CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS
 _CUTOUT_CACHE_MAX_BYTES = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES
 _HOT_CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS
 _HOT_CUTOUT_CACHE_TTL_SECONDS = 20 * 60
+_TRANSIT_STORAGE_ROOT = Path(__file__).resolve().parent.parent / ".cache" / "transit"
+_TRANSIT_STAGE_DIR = (
+    Path(TRANSIT_CUTOUT_STAGE_DIR)
+    if TRANSIT_CUTOUT_STAGE_DIR
+    else _TRANSIT_STORAGE_ROOT / "staging"
+)
 _DISK_CUTOUT_CACHE_DIR = (
     Path(TRANSIT_CUTOUT_DISK_CACHE_DIR)
     if TRANSIT_CUTOUT_DISK_CACHE_DIR
-    else Path(tempfile.gettempdir()) / "easwa_tesscut_cache"
+    else _TRANSIT_STORAGE_ROOT / "cutouts"
 )
+_TRANSIT_STAGE_FILE_TTL_SECONDS = 6 * 60 * 60
 _TIC_EDGE_MARGIN_PX = 6.0
 _TIC_MIN_LOCAL_COVERAGE = 0.85
 _TIC_MIN_SIGNAL_SIGMA = 3.0
@@ -138,6 +146,26 @@ def _normalize_cutout_size(size_px: int | None) -> int:
 
 def _is_disk_cutout_cache_enabled() -> bool:
     return TRANSIT_CUTOUT_DISK_CACHE_ENABLED
+
+
+def _ensure_transit_stage_dir() -> None:
+    _TRANSIT_STAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _prune_transit_stage_dir() -> None:
+    if not _TRANSIT_STAGE_DIR.exists():
+        return
+    now = time.time()
+    for path in _TRANSIT_STAGE_DIR.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in {".zip", ".fits"}:
+            continue
+        try:
+            if now - path.stat().st_mtime > _TRANSIT_STAGE_FILE_TTL_SECONDS:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 def create_preview_job(
@@ -1008,7 +1036,13 @@ def _load_cutout_dataset(
 
     temp_zip_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as temp_zip_file:
+        _ensure_transit_stage_dir()
+        _prune_transit_stage_dir()
+        with tempfile.NamedTemporaryFile(
+            dir=_TRANSIT_STAGE_DIR,
+            suffix=".zip",
+            delete=False,
+        ) as temp_zip_file:
             temp_zip_path = Path(temp_zip_file.name)
             with urlopen(request, timeout=120) as response:
                 content_length = response.headers.get("Content-Length")
@@ -1129,9 +1163,11 @@ def _disk_cutout_cache_path(cache_key: tuple[str, str, int, int]) -> Path | None
 
 
 def _extract_temp_fits_from_zip(zip_path: Path) -> Path:
+    _ensure_transit_stage_dir()
     with zipfile.ZipFile(zip_path) as archive_file:
         fits_name = next(name for name in archive_file.namelist() if name.lower().endswith(".fits"))
         with archive_file.open(fits_name) as source, tempfile.NamedTemporaryFile(
+            dir=_TRANSIT_STAGE_DIR,
             suffix=".fits",
             delete=False,
         ) as temp_fits_file:

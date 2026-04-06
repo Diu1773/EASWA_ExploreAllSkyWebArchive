@@ -11,6 +11,8 @@ services:
     envVars:
       - key: EASWA_DEBUG
         value: "false"
+      - key: EASWA_TRANSIT_CUTOUT_DISK_CACHE_ENABLED
+        value: "false"
       - key: EASWA_SESSION_SECRET
         generateValue: true
       - key: EASWA_RECORD_REQUIRE_LOGIN
