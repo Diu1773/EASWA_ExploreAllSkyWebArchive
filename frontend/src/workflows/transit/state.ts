@@ -68,6 +68,7 @@ export interface TransitLabState {
   foldEnabled: boolean;
   foldPeriod: number | null;
   foldT0: number;
+  foldT0Auto: boolean;
 
   // Fit config
   fitLimbDarkening: boolean;
@@ -165,6 +166,7 @@ export function createInitialTransitLabState(
     foldEnabled: false,
     foldPeriod: null,
     foldT0: 0,
+    foldT0Auto: true,
     fitLimbDarkening: false,
     fitDataSource: 'bjd_window',
     bjdWindowStart: null,
@@ -245,6 +247,7 @@ export function transitLabReducer(
         foldEnabled: saved.foldEnabled,
         foldPeriod: saved.foldPeriod,
         foldT0: saved.foldT0,
+        foldT0Auto: saved.foldT0Auto,
         fitLimbDarkening: saved.fitLimbDarkening,
         fitDataSource: saved.fitDataSource,
         bjdWindowStart: saved.bjdWindowStart,

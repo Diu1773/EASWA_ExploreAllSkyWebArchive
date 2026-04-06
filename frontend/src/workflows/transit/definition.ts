@@ -35,6 +35,7 @@ export interface PersistedTransitLabState {
   foldEnabled: boolean;
   foldPeriod: number | null;
   foldT0: number;
+  foldT0Auto: boolean;
   fitLimbDarkening: boolean;
   fitDataSource: TransitFitDataSource;
   bjdWindowStart: number | null;
@@ -492,6 +493,7 @@ export function createTransitWorkflowDefinition({
             ? candidate.foldPeriod
             : null,
         foldT0: normalizeFiniteNumber(candidate.foldT0, 0),
+        foldT0Auto: candidate.foldT0Auto === false ? false : true,
         fitLimbDarkening: Boolean(candidate.fitLimbDarkening),
         fitDataSource:
           candidate.fitDataSource === 'phase_fold' ? 'phase_fold' : 'bjd_window',
