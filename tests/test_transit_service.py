@@ -219,6 +219,7 @@ def test_load_cutout_dataset_reuses_recent_oversized_cutout(monkeypatch):
     transit_service._cutout_cache.clear()
     transit_service._hot_cutout_cache.clear()
     monkeypatch.setattr(transit_service, "_CUTOUT_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr(transit_service, "_HOT_CUTOUT_CACHE_MAX_ITEMS", 1)
 
     cache_key = ("wasp_52_b", "wasp_52_b_sector_0042", 42, 60)
     dataset = transit_service.CutoutDataset(

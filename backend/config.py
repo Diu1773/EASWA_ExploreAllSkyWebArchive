@@ -37,7 +37,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 BASE_URL = os.getenv("EASWA_BASE_URL", "http://localhost:5895")
 _parsed_base_url = urlparse(BASE_URL)
 _is_local_base_url = _parsed_base_url.hostname in {"localhost", "127.0.0.1"}
-_is_local_runtime = DEBUG or _is_local_base_url
+_uses_dev_runtime_defaults = DEBUG
 
 _session_secret = os.getenv("EASWA_SESSION_SECRET", "").strip()
 if _session_secret:
@@ -82,31 +82,31 @@ TRANSIT_PREVIEW_JOB_TTL_SECONDS = _parse_int(
 )
 TRANSIT_PREVIEW_WORKERS = max(
     1,
-    _parse_int("EASWA_TRANSIT_PREVIEW_WORKERS", 2 if _is_local_runtime else 1),
+    _parse_int("EASWA_TRANSIT_PREVIEW_WORKERS", 2 if _uses_dev_runtime_defaults else 1),
 )
 TRANSIT_FRAME_COUNT_WORKERS = max(
     1,
-    _parse_int("EASWA_TRANSIT_FRAME_COUNT_WORKERS", 4 if _is_local_runtime else 1),
+    _parse_int("EASWA_TRANSIT_FRAME_COUNT_WORKERS", 4 if _uses_dev_runtime_defaults else 1),
 )
 TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS = max(
     0,
     _parse_int(
         "EASWA_TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS",
-        4 if _is_local_runtime else 1,
+        4 if _uses_dev_runtime_defaults else 1,
     ),
 )
 TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES = max(
     0,
     _parse_int(
         "EASWA_TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES",
-        96 * 1024 * 1024 if _is_local_runtime else 16 * 1024 * 1024,
+        96 * 1024 * 1024 if _uses_dev_runtime_defaults else 16 * 1024 * 1024,
     ),
 )
 TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS = max(
     0,
     _parse_int(
         "EASWA_TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS",
-        1 if _is_local_runtime else 0,
+        1 if _uses_dev_runtime_defaults else 0,
     ),
 )
 RECORD_REQUIRE_LOGIN = _parse_bool("EASWA_RECORD_REQUIRE_LOGIN", True)
