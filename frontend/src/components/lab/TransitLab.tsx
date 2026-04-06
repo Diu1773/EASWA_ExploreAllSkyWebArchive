@@ -76,7 +76,11 @@ const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
   { id: 'record', label: 'Record Result', number: 6 },
 ];
 
-const CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45] as const;
+const DEV_CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99] as const;
+const PROD_CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45] as const;
+const CUTOUT_SIZE_OPTIONS = import.meta.env.DEV
+  ? DEV_CUTOUT_SIZE_OPTIONS
+  : PROD_CUTOUT_SIZE_OPTIONS;
 
 const DEFAULT_APERTURE: ApertureParams = {
   apertureRadius: 2.5,
@@ -169,6 +173,7 @@ export function TransitLab({
     foldEnabled,
     foldPeriod,
     foldT0,
+    foldT0Auto,
     fitLimbDarkening,
     fitDataSource,
     bjdWindowStart,
@@ -289,6 +294,7 @@ export function TransitLab({
     foldEnabled,
     foldPeriod,
     foldT0,
+    foldT0Auto,
     fitLimbDarkening,
     fitDataSource,
     bjdWindowStart,
@@ -516,6 +522,11 @@ export function TransitLab({
               Number.isFinite(payload.context.transit_fit.t0)
               ? payload.context.transit_fit.t0
               : 0,
+          foldT0Auto:
+            !(
+              typeof payload.context?.transit_fit?.t0 === 'number' &&
+              Number.isFinite(payload.context.transit_fit.t0)
+            ),
           bjdWindowStart: payload.context?.fit_controls?.bjd_start ?? null,
           bjdWindowEnd: payload.context?.fit_controls?.bjd_end ?? null,
           targetAperture: payload.context?.target_aperture
@@ -1468,6 +1479,7 @@ export function TransitLab({
       foldEnabled: false,
       foldPeriod: null,
       foldT0: 0,
+      foldT0Auto: true,
       fitLimbDarkening: false,
       fitDataSource: 'bjd_window',
       fitWindowPhase: 0.12,
@@ -1699,7 +1711,7 @@ export function TransitLab({
     roiMidpoint
   );
   const phaseFoldReferenceT0 =
-    Number.isFinite(foldT0) && foldT0 !== 0
+    !foldT0Auto && Number.isFinite(foldT0) && foldT0 !== 0
       ? foldT0
       : activeFitPreviewResult?.preprocessing.fit_mode === 'phase_fold'
         ? activeFitPreviewResult.reference_t0
@@ -2299,7 +2311,6 @@ export function TransitLab({
                 onClick={() => {
                   patch({
                     fitDataSource: 'phase_fold',
-                    ...(hasResolvedBjdWindow && foldT0 === 0 ? { foldT0: estimatedPhaseFoldT0 } : {}),
                     fitResult: null,
                   });
                 }}
@@ -2367,7 +2378,7 @@ export function TransitLab({
                           onChange={(e) => {
                             const v = parseFloat(e.target.value);
                             if (!isNaN(v)) {
-                              patch({ foldT0: v, fitResult: null });
+                              patch({ foldT0: v, foldT0Auto: false, fitResult: null });
                             }
                           }}
                         />
@@ -2400,7 +2411,8 @@ export function TransitLab({
                       onClick={() => {
                         patch({
                           foldPeriod: target.period_days ?? result?.light_curve.period_days ?? null,
-                          foldT0: estimatedPhaseFoldT0,
+                          foldT0: 0,
+                          foldT0Auto: true,
                           fitWindowPhase: 0.12,
                           fitResult: null,
                         });
