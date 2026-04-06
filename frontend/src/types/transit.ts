@@ -55,6 +55,7 @@ export interface TransitCutoutPreview {
   frame_metadata?: TransitFrameMetadata | null;
   target_position: PixelCoordinate;
   image_data_url: string;
+  dataset_token?: string | null;
   tic_stars?: TICStarInfo[];
 }
 
@@ -75,6 +76,7 @@ export interface TransitPhotometryRequest {
   target_id: string;
   observation_id: string;
   cutout_size_px: number;
+  preview_dataset_token?: string | null;
   target_context?: {
     ra: number;
     dec: number;

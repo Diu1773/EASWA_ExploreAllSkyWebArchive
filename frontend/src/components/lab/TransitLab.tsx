@@ -66,7 +66,6 @@ interface TransitLabProps {
 
 type TransitStep = TransitWorkflowStep;
 type StepState = 'locked' | 'accessible' | 'completed';
-type StateSetterArg<T> = T | ((prev: T) => T);
 
 const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
   { id: 'select', label: 'Select Stars', number: 1 },
@@ -156,7 +155,6 @@ export function TransitLab({
     (changes: Partial<TransitLabState>) => dispatch({ type: 'patch', changes }),
     [],
   );
-
   // Destructure for convenient access throughout the component
   const {
     activeObservationId,
@@ -204,201 +202,6 @@ export function TransitLab({
     recordSubmitting,
   } = state;
 
-  const setStateField = useCallback(function <K extends keyof TransitLabState>(
-    key: K,
-    value: StateSetterArg<TransitLabState[K]>
-  ) {
-    dispatch({
-      type: 'update',
-      updater: (currentState) => ({
-        [key]:
-          typeof value === 'function'
-            ? (value as (prev: TransitLabState[K]) => TransitLabState[K])(currentState[key])
-            : value,
-      }) as Partial<TransitLabState>,
-    });
-  }, []);
-
-  const setActiveObservationId = useCallback(
-    (value: StateSetterArg<TransitLabState['activeObservationId']>) =>
-      setStateField('activeObservationId', value),
-    [setStateField]
-  );
-  const setCutoutSizePx = useCallback(
-    (value: StateSetterArg<TransitLabState['cutoutSizePx']>) =>
-      setStateField('cutoutSizePx', value),
-    [setStateField]
-  );
-  const setPendingCutoutSizePx = useCallback(
-    (value: StateSetterArg<TransitLabState['pendingCutoutSizePx']>) =>
-      setStateField('pendingCutoutSizePx', value),
-    [setStateField]
-  );
-  const setSelectedFrameIndex = useCallback(
-    (value: StateSetterArg<TransitLabState['selectedFrameIndex']>) =>
-      setStateField('selectedFrameIndex', value),
-    [setStateField]
-  );
-  const setTargetAperture = useCallback(
-    (value: StateSetterArg<TransitLabState['targetAperture']>) =>
-      setStateField('targetAperture', value),
-    [setStateField]
-  );
-  const setTargetPositionOffset = useCallback(
-    (value: StateSetterArg<TransitLabState['targetPositionOffset']>) =>
-      setStateField('targetPositionOffset', value),
-    [setStateField]
-  );
-  const setComparisonStars = useCallback(
-    (value: StateSetterArg<TransitLabState['comparisonStars']>) =>
-      setStateField('comparisonStars', value),
-    [setStateField]
-  );
-  const setSelectedStar = useCallback(
-    (value: StateSetterArg<TransitLabState['selectedStar']>) =>
-      setStateField('selectedStar', value),
-    [setStateField]
-  );
-  const setResult = useCallback(
-    (value: StateSetterArg<TransitLabState['result']>) => setStateField('result', value),
-    [setStateField]
-  );
-  const setFoldEnabled = useCallback(
-    (value: StateSetterArg<TransitLabState['foldEnabled']>) =>
-      setStateField('foldEnabled', value),
-    [setStateField]
-  );
-  const setFoldPeriod = useCallback(
-    (value: StateSetterArg<TransitLabState['foldPeriod']>) =>
-      setStateField('foldPeriod', value),
-    [setStateField]
-  );
-  const setFoldT0 = useCallback(
-    (value: StateSetterArg<TransitLabState['foldT0']>) => setStateField('foldT0', value),
-    [setStateField]
-  );
-  const setFitLimbDarkening = useCallback(
-    (value: StateSetterArg<TransitLabState['fitLimbDarkening']>) =>
-      setStateField('fitLimbDarkening', value),
-    [setStateField]
-  );
-  const setFitDataSource = useCallback(
-    (value: StateSetterArg<TransitLabState['fitDataSource']>) =>
-      setStateField('fitDataSource', value),
-    [setStateField]
-  );
-  const setBjdWindowStart = useCallback(
-    (value: StateSetterArg<TransitLabState['bjdWindowStart']>) =>
-      setStateField('bjdWindowStart', value),
-    [setStateField]
-  );
-  const setBjdWindowEnd = useCallback(
-    (value: StateSetterArg<TransitLabState['bjdWindowEnd']>) =>
-      setStateField('bjdWindowEnd', value),
-    [setStateField]
-  );
-  const setFitWindowPhase = useCallback(
-    (value: StateSetterArg<TransitLabState['fitWindowPhase']>) =>
-      setStateField('fitWindowPhase', value),
-    [setStateField]
-  );
-  const setFitBaselineOrder = useCallback(
-    (value: StateSetterArg<TransitLabState['fitBaselineOrder']>) =>
-      setStateField('fitBaselineOrder', value),
-    [setStateField]
-  );
-  const setFitSigmaClipSigma = useCallback(
-    (value: StateSetterArg<TransitLabState['fitSigmaClipSigma']>) =>
-      setStateField('fitSigmaClipSigma', value),
-    [setStateField]
-  );
-  const setFitSigmaClipIterations = useCallback(
-    (value: StateSetterArg<TransitLabState['fitSigmaClipIterations']>) =>
-      setStateField('fitSigmaClipIterations', value),
-    [setStateField]
-  );
-  const setFitResult = useCallback(
-    (value: StateSetterArg<TransitLabState['fitResult']>) =>
-      setStateField('fitResult', value),
-    [setStateField]
-  );
-  const setRecordAnswers = useCallback(
-    (value: StateSetterArg<TransitLabState['recordAnswers']>) =>
-      setStateField('recordAnswers', value),
-    [setStateField]
-  );
-  const setRecordTitle = useCallback(
-    (value: StateSetterArg<TransitLabState['recordTitle']>) =>
-      setStateField('recordTitle', value),
-    [setStateField]
-  );
-  const setSubmittedRecord = useCallback(
-    (value: StateSetterArg<TransitLabState['submittedRecord']>) =>
-      setStateField('submittedRecord', value),
-    [setStateField]
-  );
-  const setRunning = useCallback(
-    (value: StateSetterArg<TransitLabState['running']>) => setStateField('running', value),
-    [setStateField]
-  );
-  const setProgress = useCallback(
-    (value: StateSetterArg<TransitLabState['progress']>) => setStateField('progress', value),
-    [setStateField]
-  );
-  const setRunProgressEvent = useCallback(
-    (value: StateSetterArg<TransitLabState['runProgressEvent']>) =>
-      setStateField('runProgressEvent', value),
-    [setStateField]
-  );
-  const setErrorMessage = useCallback(
-    (value: StateSetterArg<TransitLabState['errorMessage']>) =>
-      setStateField('errorMessage', value),
-    [setStateField]
-  );
-  const setFitting = useCallback(
-    (value: StateSetterArg<TransitLabState['fitting']>) => setStateField('fitting', value),
-    [setStateField]
-  );
-  const setFitProgress = useCallback(
-    (value: StateSetterArg<TransitLabState['fitProgress']>) =>
-      setStateField('fitProgress', value),
-    [setStateField]
-  );
-  const setFitDebugRequest = useCallback(
-    (value: StateSetterArg<TransitLabState['fitDebugRequest']>) =>
-      setStateField('fitDebugRequest', value),
-    [setStateField]
-  );
-  const setFitDebugLog = useCallback(
-    (value: StateSetterArg<TransitLabState['fitDebugLog']>) =>
-      setStateField('fitDebugLog', value),
-    [setStateField]
-  );
-  const setShowTicMarkers = useCallback(
-    (value: StateSetterArg<TransitLabState['showTicMarkers']>) =>
-      setStateField('showTicMarkers', value),
-    [setStateField]
-  );
-  const setSelectedComparisonDiagnostic = useCallback(
-    (value: StateSetterArg<TransitLabState['selectedComparisonDiagnostic']>) =>
-      setStateField('selectedComparisonDiagnostic', value),
-    [setStateField]
-  );
-  const setQcIncludedComparisonLabels = useCallback(
-    (value: StateSetterArg<TransitLabState['qcIncludedComparisonLabels']>) =>
-      setStateField('qcIncludedComparisonLabels', value),
-    [setStateField]
-  );
-  const setRecordLoading = useCallback(
-    (value: StateSetterArg<TransitLabState['recordLoading']>) =>
-      setStateField('recordLoading', value),
-    [setStateField]
-  );
-  const setRecordSubmitting = useCallback(
-    (value: StateSetterArg<TransitLabState['recordSubmitting']>) =>
-      setStateField('recordSubmitting', value),
-    [setStateField]
-  );
 
   // ── Refs (side-effects only, not in reducer) ─────────────────────────
   const previewJobIdRef = useRef<string | null>(null);
@@ -1062,20 +865,22 @@ export function TransitLab({
 
   useEffect(() => {
     if (!result) {
-      setSubmittedRecord(null);
+      patch({ submittedRecord: null });
       return;
     }
     if (!recordTitle) {
       const sectorLabel = result.sector ? `Sector ${result.sector}` : 'Transit run';
-      setRecordTitle(`${target.name} ${sectorLabel}`);
+      patch({ recordTitle: `${target.name} ${sectorLabel}` });
     }
   }, [result, target.name, recordTitle]);
 
   // Auto-enable fold when result arrives and target has a known period
   useEffect(() => {
     if (result && target.period_days) {
-      if (foldPeriod === null) setFoldPeriod(target.period_days);
-      if (!foldEnabled) setFoldEnabled(true);
+      patch({
+        ...(foldPeriod === null ? { foldPeriod: target.period_days } : {}),
+        ...(!foldEnabled ? { foldEnabled: true } : {}),
+      });
     }
   }, [result, target.period_days]);
 
@@ -1100,32 +905,38 @@ export function TransitLab({
       foldPeriod ?? target.period_days ?? result.light_curve.period_days
     );
     if (!defaultWindow) return;
-    setBjdWindowStart(defaultWindow.start);
-    setBjdWindowEnd(defaultWindow.end);
+    patch({ bjdWindowStart: defaultWindow.start, bjdWindowEnd: defaultWindow.end });
   }, [result, foldPeriod, target.period_days, bjdWindowStart, bjdWindowEnd]);
 
   useEffect(() => {
     if (recordLoading || recordTemplateRequestedRef.current) return;
     let cancelled = false;
     recordTemplateRequestedRef.current = true;
-    setRecordLoading(true);
+    patch({ recordLoading: true });
     fetchRecordTemplate('transit_record')
       .then((template) => {
         if (cancelled) return;
         setRecordTemplate(template);
-        setRecordAnswers((current) =>
-          Object.keys(current).length > 0 ? current : buildInitialRecordAnswers(template)
-        );
+        dispatch({
+          type: 'update',
+          updater: (s) => ({
+            recordAnswers:
+              Object.keys(s.recordAnswers).length > 0
+                ? s.recordAnswers
+                : buildInitialRecordAnswers(template),
+          }),
+        });
       })
       .catch((error) => {
         if (cancelled) return;
         console.error('Failed to load record template', error);
-        setErrorMessage(
-          error instanceof Error ? error.message : 'Failed to load record form.'
-        );
+        patch({
+          errorMessage:
+            error instanceof Error ? error.message : 'Failed to load record form.',
+        });
       })
       .finally(() => {
-        if (!cancelled) setRecordLoading(false);
+        if (!cancelled) patch({ recordLoading: false });
       });
     return () => {
       cancelled = true;
@@ -1164,15 +975,16 @@ export function TransitLab({
 
   useEffect(() => {
     if (!result || comparisonDiagnostics.length === 0) {
-      setSelectedComparisonDiagnostic(null);
-      setQcIncludedComparisonLabels([]);
+      patch({ selectedComparisonDiagnostic: null, qcIncludedComparisonLabels: [] });
       return;
     }
     const bestDiagnostic = [...comparisonDiagnostics].sort(
       (left, right) => left.differential_rms - right.differential_rms
     )[0];
-    setSelectedComparisonDiagnostic(bestDiagnostic.label);
-    setQcIncludedComparisonLabels(comparisonDiagnostics.map((diagnostic) => diagnostic.label));
+    patch({
+      selectedComparisonDiagnostic: bestDiagnostic.label,
+      qcIncludedComparisonLabels: comparisonDiagnostics.map((diagnostic) => diagnostic.label),
+    });
   }, [result]);
 
   // Effective target position (original or user-dragged)
@@ -1248,16 +1060,22 @@ export function TransitLab({
     return comparisonStars[idx]?.aperture ?? DEFAULT_APERTURE;
   };
 
-  const updateSelectedAperture = (patch: Partial<ApertureParams>) => {
+  const updateSelectedAperture = (apertureChanges: Partial<ApertureParams>) => {
     if (selectedStar === 'T') {
-      setTargetAperture((prev) => ({ ...prev, ...patch }));
+      dispatch({
+        type: 'update',
+        updater: (s) => ({ targetAperture: { ...s.targetAperture, ...apertureChanges } }),
+      });
     } else {
       const idx = parseInt(selectedStar.slice(1)) - 1;
-      setComparisonStars((prev) =>
-        prev.map((cs, i) =>
-          i === idx ? { ...cs, aperture: { ...cs.aperture, ...patch } } : cs
-        )
-      );
+      dispatch({
+        type: 'update',
+        updater: (s) => ({
+          comparisonStars: s.comparisonStars.map((cs, i) =>
+            i === idx ? { ...cs, aperture: { ...cs.aperture, ...apertureChanges } } : cs
+          ),
+        }),
+      });
     }
   };
 
@@ -1320,74 +1138,82 @@ export function TransitLab({
   };
 
   const handleAddComparison = (position: PixelCoordinate) => {
-    let nextKey: StarKey | null = null;
-    setComparisonStars((current) => {
-      if (current.length >= MAX_COMPARISON_STARS) return current;
-      if (
-        targetComparisonCollisionPosition &&
-        arePixelPositionsNear(position, targetComparisonCollisionPosition)
-      ) {
-        return current;
-      }
-      if (current.some((star) => arePixelPositionsNear(star.position, position))) {
-        return current;
-      }
-      const next = [...current, { position, aperture: { ...DEFAULT_APERTURE } }];
-      nextKey = `C${next.length}` as StarKey;
-      return next;
+    dispatch({
+      type: 'update',
+      updater: (s) => {
+        if (s.comparisonStars.length >= MAX_COMPARISON_STARS) return {};
+        if (
+          targetComparisonCollisionPosition &&
+          arePixelPositionsNear(position, targetComparisonCollisionPosition)
+        ) {
+          return {};
+        }
+        if (s.comparisonStars.some((star) => arePixelPositionsNear(star.position, position))) {
+          return {};
+        }
+        const next = [...s.comparisonStars, { position, aperture: { ...DEFAULT_APERTURE } }];
+        return { comparisonStars: next, selectedStar: `C${next.length}` as StarKey };
+      },
     });
-    if (nextKey) {
-      setSelectedStar(nextKey);
-    }
   };
 
   const handleSelectStarFromCutout = (label: string) => {
     if (label === 'T' || /^C\d+$/.test(label)) {
-      setSelectedStar(label as StarKey);
+      patch({ selectedStar: label as StarKey });
     }
   };
 
   const handleMoveStar = (label: string, position: PixelCoordinate) => {
     if (label === 'T') {
-      setTargetPositionOffset(position);
+      patch({ targetPositionOffset: position });
       return;
     }
     const idx = parseInt(label.slice(1)) - 1;
     if (idx < 0 || idx >= comparisonStars.length) return;
-    setComparisonStars((prev) =>
-      prev.map((cs, i) => (i === idx ? { ...cs, position } : cs))
-    );
+    dispatch({
+      type: 'update',
+      updater: (s) => ({
+        comparisonStars: s.comparisonStars.map((cs, i) => (i === idx ? { ...cs, position } : cs)),
+      }),
+    });
   };
 
   const handleRemoveComparison = (index: number) => {
-    setComparisonStars((prev) => prev.filter((_, i) => i !== index));
-    setSelectedStar('T');
+    dispatch({
+      type: 'update',
+      updater: (s) => ({
+        comparisonStars: s.comparisonStars.filter((_, i) => i !== index),
+        selectedStar: 'T' as StarKey,
+      }),
+    });
   };
 
   const handleFrameChange = (frameIndex: number) => {
     if (!preview) return;
     const clamped = Math.max(0, Math.min(preview.frame_count - 1, frameIndex));
-    setSelectedFrameIndex(clamped);
+    patch({ selectedFrameIndex: clamped });
   };
 
   const handleRecordAnswerChange = (questionId: string, value: unknown) => {
-    setSubmittedRecord(null);
-    setRecordAnswers((current) => ({
-      ...current,
-      [questionId]: value,
-    }));
+    dispatch({
+      type: 'update',
+      updater: (s) => ({
+        submittedRecord: null,
+        recordAnswers: { ...s.recordAnswers, [questionId]: value },
+      }),
+    });
   };
 
   const handleSubmitRecord = async () => {
     if (!result) {
-      setErrorMessage('No photometry result is available to save.');
+      patch({ errorMessage: 'No photometry result is available to save.' });
       return;
     }
 
     const submissionObservationId =
       result.observation_id?.trim() || activeObservationId || preview?.observation_id || '';
     if (!submissionObservationId) {
-      setErrorMessage('Missing observation context for this analysis record.');
+      patch({ errorMessage: 'Missing observation context for this analysis record.' });
       return;
     }
 
@@ -1405,8 +1231,7 @@ export function TransitLab({
           }
         : null;
 
-    setRecordSubmitting(true);
-    setErrorMessage(null);
+    patch({ recordSubmitting: true, errorMessage: null });
     try {
       const response = await submitRecordTemplate('transit_record', {
         workflow: 'transit_lab',
@@ -1463,14 +1288,15 @@ export function TransitLab({
         },
         answers: recordAnswers,
       });
-      setSubmittedRecord(response);
+      patch({ submittedRecord: response });
     } catch (error) {
       console.error('Failed to submit analysis record', error);
-      setErrorMessage(
-        error instanceof Error ? error.message : 'Failed to submit analysis record.'
-      );
+      patch({
+        errorMessage:
+          error instanceof Error ? error.message : 'Failed to submit analysis record.',
+      });
     } finally {
-      setRecordSubmitting(false);
+      patch({ recordSubmitting: false });
     }
   };
 
@@ -1481,7 +1307,7 @@ export function TransitLab({
     const photometryTargetPosition = effectiveTargetPosition ?? result?.target_position ?? null;
 
     if (!activeObservationId || cutoutSizePx === null || !photometryTargetPosition) {
-      setErrorMessage('Missing cutout setup for transit photometry.');
+      patch({ errorMessage: 'Missing cutout setup for transit photometry.' });
       return null;
     }
 
@@ -1500,13 +1326,15 @@ export function TransitLab({
             }
           : undefined;
 
-    setRunning(true);
-    setErrorMessage(null);
-    setProgress(0);
-    setRunProgressEvent({
-      type: 'progress',
-      pct: 0,
-      message: 'Starting transit photometry...',
+    patch({
+      running: true,
+      errorMessage: null,
+      progress: 0,
+      runProgressEvent: {
+        type: 'progress',
+        pct: 0,
+        message: 'Starting transit photometry...',
+      },
     });
 
     runAbortRef.current?.abort();
@@ -1519,6 +1347,11 @@ export function TransitLab({
           target_id: target.id,
           observation_id: activeObservationId,
           cutout_size_px: cutoutSizePx,
+          preview_dataset_token:
+            preview?.observation_id === activeObservationId &&
+            preview.cutout_size_px === cutoutSizePx
+              ? preview.dataset_token ?? null
+              : null,
           target_context: {
             ra: target.ra,
             dec: target.dec,
@@ -1539,36 +1372,40 @@ export function TransitLab({
           ),
         },
         (event) => {
-          setRunProgressEvent(event);
-          setProgress(Math.max(0, Math.min(100, Math.round((event.pct ?? 0) * 100))));
+          patch({
+            runProgressEvent: event,
+            progress: Math.max(0, Math.min(100, Math.round((event.pct ?? 0) * 100))),
+          });
         },
         controller.signal
       );
-      setProgress(100);
-      setRunProgressEvent({
-        type: 'progress',
-        pct: 1,
-        message: 'Transit photometry complete.',
+      patch({
+        progress: 100,
+        runProgressEvent: {
+          type: 'progress',
+          pct: 1,
+          message: 'Transit photometry complete.',
+        },
+        result: response,
       });
-      setResult(response);
       if (nextStepAfterSuccess) {
         replaceStep(nextStepAfterSuccess);
       }
       return response;
     } catch (error) {
-      setProgress(0);
-      setRunProgressEvent(null);
+      patch({ progress: 0, runProgressEvent: null });
       if (error instanceof DOMException && error.name === 'AbortError') {
-        setErrorMessage('Photometry stopped.');
+        patch({ errorMessage: 'Photometry stopped.' });
         return null;
       }
       console.error('Transit photometry run failed', error);
-      setErrorMessage(
-        error instanceof Error ? error.message : 'Transit photometry failed.'
-      );
+      patch({
+        errorMessage:
+          error instanceof Error ? error.message : 'Transit photometry failed.',
+      });
       return null;
     } finally {
-      setRunning(false);
+      patch({ running: false });
       if (runAbortRef.current === controller) runAbortRef.current = null;
     }
   };
@@ -1578,20 +1415,25 @@ export function TransitLab({
   };
 
   const handleToggleQcComparison = (label: string) => {
-    setQcIncludedComparisonLabels((current) => {
-      if (current.includes(label)) {
-        return current.filter((item) => item !== label);
-      }
-      return [...current, label].sort((left, right) => {
-        const leftIndex = parseInt(left.slice(1), 10);
-        const rightIndex = parseInt(right.slice(1), 10);
-        return leftIndex - rightIndex;
-      });
+    dispatch({
+      type: 'update',
+      updater: (s) => {
+        if (s.qcIncludedComparisonLabels.includes(label)) {
+          return { qcIncludedComparisonLabels: s.qcIncludedComparisonLabels.filter((item) => item !== label) };
+        }
+        return {
+          qcIncludedComparisonLabels: [...s.qcIncludedComparisonLabels, label].sort((left, right) => {
+            const leftIndex = parseInt(left.slice(1), 10);
+            const rightIndex = parseInt(right.slice(1), 10);
+            return leftIndex - rightIndex;
+          }),
+        };
+      },
     });
   };
 
   const handleSelectAllQcComparisons = () => {
-    setQcIncludedComparisonLabels(comparisonDiagnostics.map((diagnostic) => diagnostic.label));
+    patch({ qcIncludedComparisonLabels: comparisonDiagnostics.map((diagnostic) => diagnostic.label) });
   };
 
   const handleApplyComparisonQc = async () => {
@@ -1599,27 +1441,21 @@ export function TransitLab({
       qcIncludedComparisonLabels.includes(`C${index + 1}`)
     );
     if (retainedComparisons.length === 0) {
-      setErrorMessage('Keep at least one comparison star before re-running photometry.');
+      patch({ errorMessage: 'Keep at least one comparison star before re-running photometry.' });
       return;
     }
 
-    setProgress(0);
-    setRunProgressEvent(null);
+    patch({ progress: 0, runProgressEvent: null });
     const response = await runTransitPhotometryForComparisons(retainedComparisons, 'comparisonqc');
     if (response) {
-      setFitResult(null);
       suppressAnalysisInvalidationRef.current = true;
-      setComparisonStars(retainedComparisons);
-      setSelectedStar('T');
+      patch({ fitResult: null, comparisonStars: retainedComparisons, selectedStar: 'T' });
     }
   };
 
   const handleStop = () => {
     runAbortRef.current?.abort();
-    setRunning(false);
-    setProgress(0);
-    setRunProgressEvent(null);
-    setErrorMessage('Photometry stopped.');
+    patch({ running: false, progress: 0, runProgressEvent: null, errorMessage: 'Photometry stopped.' });
   };
 
   const handleReset = () => {
@@ -1628,15 +1464,17 @@ export function TransitLab({
     analysisConfigSignatureRef.current = null;
     observedActiveObservationRef.current = undefined;
     applyTransitInvalidation({ type: 'hard-reset' });
-    setFoldEnabled(false);
-    setFoldPeriod(null);
-    setFoldT0(0);
-    setFitLimbDarkening(false);
-    setFitDataSource('bjd_window');
-    setFitWindowPhase(0.12);
-    setFitBaselineOrder(0);
-    setFitSigmaClipSigma(0.0);
-    setFitSigmaClipIterations(0);
+    patch({
+      foldEnabled: false,
+      foldPeriod: null,
+      foldT0: 0,
+      fitLimbDarkening: false,
+      fitDataSource: 'bjd_window',
+      fitWindowPhase: 0.12,
+      fitBaselineOrder: 0,
+      fitSigmaClipSigma: 0.0,
+      fitSigmaClipIterations: 0,
+    });
   };
 
   // Navigation
@@ -1662,7 +1500,7 @@ export function TransitLab({
   const handleFitTransit = async () => {
     if (!result) return;
     if (roiPoints.length < 20) {
-      setErrorMessage('The Step 4 ROI retained too few points for transit fitting.');
+      patch({ errorMessage: 'The Step 4 ROI retained too few points for transit fitting.' });
       return;
     }
     const fitPeriod =
@@ -1689,37 +1527,39 @@ export function TransitLab({
     const roiFluxes = roiPoints.map((point) => point.magnitude).filter(Number.isFinite);
     const roiErrors = roiPoints.map((point) => point.mag_error).filter(Number.isFinite);
 
-    setFitting(true);
-    setErrorMessage(null);
-    setFitResult(null);
-    setFitProgress(null);
-    setFitDebugRequest({
-      fitMode: fitDataSource,
-      period: fitPeriod,
-      t0: fitT0,
-      filterName: resolvedFilterName,
-      stellarTemperature:
-        typeof target.stellar_temperature === 'number' ? target.stellar_temperature : null,
-      stellarLogg: typeof target.stellar_logg === 'number' ? target.stellar_logg : null,
-      stellarMetallicity:
-        typeof target.stellar_metallicity === 'number' ? target.stellar_metallicity : null,
-      bjdStart: fitDataSource === 'bjd_window' ? resolvedBjdStart : null,
-      bjdEnd: fitDataSource === 'bjd_window' ? resolvedBjdEnd : null,
-      requestedFitWindowPhase,
-      baselineOrder: fitBaselineOrder,
-      sigmaClipSigma: fitSigmaClipSigma,
-      sigmaClipIterations: fitSigmaClipIterations,
-      roiPointCount: roiPoints.length,
-      roiTimeMin: roiTimes.length > 0 ? Math.min(...roiTimes) : null,
-      roiTimeMax: roiTimes.length > 0 ? Math.max(...roiTimes) : null,
-      roiFluxMin: roiFluxes.length > 0 ? Math.min(...roiFluxes) : null,
-      roiFluxMax: roiFluxes.length > 0 ? Math.max(...roiFluxes) : null,
-      roiErrorMin: roiErrors.length > 0 ? Math.min(...roiErrors) : null,
-      roiErrorMax: roiErrors.length > 0 ? Math.max(...roiErrors) : null,
+    patch({
+      fitting: true,
+      errorMessage: null,
+      fitResult: null,
+      fitProgress: null,
+      fitDebugRequest: {
+        fitMode: fitDataSource,
+        period: fitPeriod,
+        t0: fitT0,
+        filterName: resolvedFilterName,
+        stellarTemperature:
+          typeof target.stellar_temperature === 'number' ? target.stellar_temperature : null,
+        stellarLogg: typeof target.stellar_logg === 'number' ? target.stellar_logg : null,
+        stellarMetallicity:
+          typeof target.stellar_metallicity === 'number' ? target.stellar_metallicity : null,
+        bjdStart: fitDataSource === 'bjd_window' ? resolvedBjdStart : null,
+        bjdEnd: fitDataSource === 'bjd_window' ? resolvedBjdEnd : null,
+        requestedFitWindowPhase,
+        baselineOrder: fitBaselineOrder,
+        sigmaClipSigma: fitSigmaClipSigma,
+        sigmaClipIterations: fitSigmaClipIterations,
+        roiPointCount: roiPoints.length,
+        roiTimeMin: roiTimes.length > 0 ? Math.min(...roiTimes) : null,
+        roiTimeMax: roiTimes.length > 0 ? Math.max(...roiTimes) : null,
+        roiFluxMin: roiFluxes.length > 0 ? Math.min(...roiFluxes) : null,
+        roiFluxMax: roiFluxes.length > 0 ? Math.max(...roiFluxes) : null,
+        roiErrorMin: roiErrors.length > 0 ? Math.min(...roiErrors) : null,
+        roiErrorMax: roiErrors.length > 0 ? Math.max(...roiErrors) : null,
+      },
+      fitDebugLog: [
+        `init mode=${fitDataSource} period=${fitPeriod.toFixed(6)} t0=${fitT0.toFixed(6)} points=${roiPoints.length}`,
+      ],
     });
-    setFitDebugLog([
-      `init mode=${fitDataSource} period=${fitPeriod.toFixed(6)} t0=${fitT0.toFixed(6)} points=${roiPoints.length}`,
-    ]);
     try {
       const response = await fitTransitModelStreaming(
         {
@@ -1743,11 +1583,13 @@ export function TransitLab({
           points: roiPoints,
         },
         (event) => {
-          setFitProgress(event);
-          setFitDebugLog((current) => [
-            ...current,
-            `${event.stage} pct=${((event.pct ?? 0) * 100).toFixed(0)}${event.step && event.total ? ` step=${event.step}/${event.total}` : ''}`,
-          ]);
+          patch({ fitProgress: event });
+          dispatch({
+            type: 'append-fit-debug-log',
+            lines: [
+              `${event.stage} pct=${((event.pct ?? 0) * 100).toFixed(0)}${event.step && event.total ? ` step=${event.step}/${event.total}` : ''}`,
+            ],
+          });
         },
       );
       const normalizedResponse = normalizeTransitFitResponse(response);
@@ -1763,26 +1605,30 @@ export function TransitLab({
                 value - normalizedResponse.residuals[index]
             )
           : [];
-      setFitDebugLog((current) => [
-        ...current,
-        `result rp_rs=${normalizedResponse.fitted_params.rp_rs.toFixed(5)} a_rs=${normalizedResponse.fitted_params.a_rs.toFixed(2)} inc=${normalizedResponse.fitted_params.inclination.toFixed(2)} t0=${normalizedResponse.t0.toFixed(6)} ref_t0=${normalizedResponse.reference_t0.toFixed(6)} retained=${normalizedResponse.preprocessing.retained_points}`,
-        responseModel.length > 0
-          ? `model flux min=${Math.min(...responseModel).toFixed(6)} max=${Math.max(...responseModel).toFixed(6)}`
-          : 'model flux unavailable',
-      ]);
-      setFitResult(normalizedResponse);
+      dispatch({
+        type: 'append-fit-debug-log',
+        lines: [
+          `result rp_rs=${normalizedResponse.fitted_params.rp_rs.toFixed(5)} a_rs=${normalizedResponse.fitted_params.a_rs.toFixed(2)} inc=${normalizedResponse.fitted_params.inclination.toFixed(2)} t0=${normalizedResponse.t0.toFixed(6)} ref_t0=${normalizedResponse.reference_t0.toFixed(6)} retained=${normalizedResponse.preprocessing.retained_points}`,
+          responseModel.length > 0
+            ? `model flux min=${Math.min(...responseModel).toFixed(6)} max=${Math.max(...responseModel).toFixed(6)}`
+            : 'model flux unavailable',
+        ],
+      });
+      patch({ fitResult: normalizedResponse });
     } catch (error) {
       console.error('Transit fitting failed', error);
-      setFitDebugLog((current) => [
-        ...current,
-        `error ${error instanceof Error ? error.message : 'Transit model fitting failed.'}`,
-      ]);
-      setErrorMessage(
-        error instanceof Error ? error.message : 'Transit model fitting failed.'
-      );
+      dispatch({
+        type: 'append-fit-debug-log',
+        lines: [
+          `error ${error instanceof Error ? error.message : 'Transit model fitting failed.'}`,
+        ],
+      });
+      patch({
+        errorMessage:
+          error instanceof Error ? error.message : 'Transit model fitting failed.',
+      });
     } finally {
-      setFitting(false);
-      setFitProgress(null);
+      patch({ fitting: false, fitProgress: null });
     }
   };
 
@@ -1953,7 +1799,7 @@ export function TransitLab({
                 <button
                   key={observation.id}
                   className={`transit-sector-button ${isActive ? 'active' : ''}`}
-                  onClick={() => setActiveObservationId(observation.id)}
+                  onClick={() => patch({ activeObservationId: observation.id })}
                 >
                   <strong>{observation.display_label ?? `Sector ${observation.sector}`}</strong>
                   <span>
@@ -1982,7 +1828,7 @@ export function TransitLab({
                 {/* Target star */}
                 <button
                   className={`transit-star-row ${selectedStar === 'T' ? 'selected' : ''}`}
-                  onClick={() => setSelectedStar('T')}
+                  onClick={() => patch({ selectedStar: 'T' })}
                 >
                   <span className="transit-star-badge target">T</span>
                   <div className="transit-star-info">
@@ -2006,7 +1852,7 @@ export function TransitLab({
                     <button
                       key={key}
                       className={`transit-star-row ${selectedStar === key ? 'selected' : ''}`}
-                      onClick={() => setSelectedStar(key)}
+                      onClick={() => patch({ selectedStar: key })}
                     >
                       <span className="transit-star-badge comparison">{key}</span>
                       <div className="transit-star-info">
@@ -2355,8 +2201,7 @@ export function TransitLab({
                   }
                   onChange={(e) => {
                     const value = e.target.value.trim();
-                    setBjdWindowStart(value === '' ? null : parseFloat(value));
-                    setFitResult(null);
+                    patch({ bjdWindowStart: value === '' ? null : parseFloat(value), fitResult: null });
                   }}
                 />
               </div>
@@ -2379,8 +2224,7 @@ export function TransitLab({
                   }
                   onChange={(e) => {
                     const value = e.target.value.trim();
-                    setBjdWindowEnd(value === '' ? null : parseFloat(value));
-                    setFitResult(null);
+                    patch({ bjdWindowEnd: value === '' ? null : parseFloat(value), fitResult: null });
                   }}
                 />
               </div>
@@ -2394,9 +2238,7 @@ export function TransitLab({
                       fitReferencePeriod
                     );
                     if (!defaultWindow) return;
-                    setBjdWindowStart(defaultWindow.start);
-                    setBjdWindowEnd(defaultWindow.end);
-                    setFitResult(null);
+                    patch({ bjdWindowStart: defaultWindow.start, bjdWindowEnd: defaultWindow.end, fitResult: null });
                   }}
                 >
                   Deepest Dip
@@ -2405,9 +2247,7 @@ export function TransitLab({
                   className="btn-sm"
                   type="button"
                   onClick={() => {
-                    setBjdWindowStart(null);
-                    setBjdWindowEnd(null);
-                    setFitResult(null);
+                    patch({ bjdWindowStart: null, bjdWindowEnd: null, fitResult: null });
                   }}
                 >
                   Clear
@@ -2448,8 +2288,7 @@ export function TransitLab({
               <button
                 className={`btn-sm ${fitDataSource === 'bjd_window' ? 'active' : ''}`}
                 onClick={() => {
-                  setFitDataSource('bjd_window');
-                  setFitResult(null);
+                  patch({ fitDataSource: 'bjd_window', fitResult: null });
                 }}
                 type="button"
               >
@@ -2458,11 +2297,11 @@ export function TransitLab({
               <button
                 className={`btn-sm ${fitDataSource === 'phase_fold' ? 'active' : ''}`}
                 onClick={() => {
-                  setFitDataSource('phase_fold');
-                  if (hasResolvedBjdWindow && foldT0 === 0) {
-                    setFoldT0(estimatedPhaseFoldT0);
-                  }
-                  setFitResult(null);
+                  patch({
+                    fitDataSource: 'phase_fold',
+                    ...(hasResolvedBjdWindow && foldT0 === 0 ? { foldT0: estimatedPhaseFoldT0 } : {}),
+                    fitResult: null,
+                  });
                 }}
                 type="button"
                 disabled={!fitReferencePeriod}
@@ -2510,8 +2349,7 @@ export function TransitLab({
                           onChange={(e) => {
                             const v = parseFloat(e.target.value);
                             if (!isNaN(v) && v > 0) {
-                              setFoldPeriod(v);
-                              setFitResult(null);
+                              patch({ foldPeriod: v, fitResult: null });
                             }
                           }}
                         />
@@ -2529,8 +2367,7 @@ export function TransitLab({
                           onChange={(e) => {
                             const v = parseFloat(e.target.value);
                             if (!isNaN(v)) {
-                              setFoldT0(v);
-                              setFitResult(null);
+                              patch({ foldT0: v, fitResult: null });
                             }
                           }}
                         />
@@ -2550,8 +2387,7 @@ export function TransitLab({
                           onChange={(e) => {
                             const v = parseFloat(e.target.value);
                             if (!isNaN(v)) {
-                              setFitWindowPhase(Math.min(Math.max(v, 0.04), 0.35));
-                              setFitResult(null);
+                              patch({ fitWindowPhase: Math.min(Math.max(v, 0.04), 0.35), fitResult: null });
                             }
                           }}
                         />
@@ -2562,10 +2398,12 @@ export function TransitLab({
                       className="btn-sm"
                       type="button"
                       onClick={() => {
-                        setFoldPeriod(target.period_days ?? result?.light_curve.period_days ?? null);
-                        setFoldT0(estimatedPhaseFoldT0);
-                        setFitWindowPhase(0.12);
-                        setFitResult(null);
+                        patch({
+                          foldPeriod: target.period_days ?? result?.light_curve.period_days ?? null,
+                          foldT0: estimatedPhaseFoldT0,
+                          fitWindowPhase: 0.12,
+                          fitResult: null,
+                        });
                       }}
                     >
                       Reset To Transit Center
@@ -2812,7 +2650,7 @@ export function TransitLab({
                   className="transit-field-size-select"
                   value={pendingCutoutSizePx}
                   disabled={previewLoading || framePreviewLoading}
-                  onChange={(e) => setPendingCutoutSizePx(Number(e.target.value))}
+                  onChange={(e) => patch({ pendingCutoutSizePx: Number(e.target.value) })}
                 >
                   {CUTOUT_SIZE_OPTIONS.map((size) => (
                     <option key={size} value={size}>
@@ -2824,7 +2662,7 @@ export function TransitLab({
                   type="button"
                   className="btn-primary btn-sm"
                   disabled={previewLoading || framePreviewLoading || (cutoutSizePx === pendingCutoutSizePx && preview !== null)}
-                  onClick={() => setCutoutSizePx(pendingCutoutSizePx)}
+                  onClick={() => patch({ cutoutSizePx: pendingCutoutSizePx })}
                 >
                   Load
                 </button>
@@ -2838,7 +2676,7 @@ export function TransitLab({
                   displayCutoutSizePx={cutoutSizePx ?? preview.cutout_size_px}
                   stars={starOverlays}
                   showTicMarkers={showTicMarkers}
-                  onToggleTicMarkers={() => setShowTicMarkers((v) => !v)}
+                  onToggleTicMarkers={() => dispatch({ type: 'update', updater: (s) => ({ showTicMarkers: !s.showTicMarkers }) })}
                   activeFrameIndex={currentFrameIndex}
                   onFrameChange={handleFrameChange}
                   frameChangeDisabled={previewLoading || framePreviewLoading}
@@ -2997,9 +2835,7 @@ export function TransitLab({
                       type="button"
                       className="btn-primary"
                       onClick={() => {
-                        setResult(null);
-                        setProgress(0);
-                        setRunProgressEvent(null);
+                        patch({ result: null, progress: 0, runProgressEvent: null });
                         handleRunPhotometry();
                       }}
                     >
@@ -3124,7 +2960,7 @@ export function TransitLab({
                                 <button
                                   type="button"
                                   className={`btn-sm ${isActive ? 'active' : ''}`}
-                                  onClick={() => setSelectedComparisonDiagnostic(diagnostic.label)}
+                                  onClick={() => patch({ selectedComparisonDiagnostic: diagnostic.label })}
                                 >
                                   Inspect
                                 </button>
@@ -3272,9 +3108,7 @@ export function TransitLab({
               highlightRange={resolvedBjdWindow}
               enableRangeSelection
               onSelectRange={(range) => {
-                setBjdWindowStart(range.start);
-                setBjdWindowEnd(range.end);
-                setFitResult(null);
+                patch({ bjdWindowStart: range.start, bjdWindowEnd: range.end, fitResult: null });
               }}
             />
 
@@ -3648,7 +3482,7 @@ export function TransitLab({
                       type="button"
                       className="btn-sm"
                       onClick={() => {
-                        setFitResult(null);
+                        patch({ fitResult: null });
                         handleFitTransit();
                       }}
                     >
@@ -3806,7 +3640,7 @@ export function TransitLab({
                     <input
                       type="text"
                       value={recordTitle}
-                      onChange={(event) => setRecordTitle(event.target.value)}
+                      onChange={(event) => patch({ recordTitle: event.target.value })}
                       placeholder={`${target.name} Sector ${result.sector}`}
                     />
                   </label>

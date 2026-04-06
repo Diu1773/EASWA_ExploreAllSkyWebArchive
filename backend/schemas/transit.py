@@ -57,6 +57,7 @@ class TransitCutoutPreviewResponse(BaseModel):
     frame_metadata: TransitFrameMetadata | None = None
     target_position: PixelCoordinate
     image_data_url: str
+    dataset_token: str | None = None
     tic_stars: list[TICStarInfo] = Field(default_factory=list)
 
 
@@ -76,6 +77,7 @@ class TransitPhotometryRequest(BaseModel):
     target_id: str
     observation_id: str
     cutout_size_px: int = 35
+    preview_dataset_token: str | None = None
     target_context: TransitTargetContext | None = None
     observation_context: TransitObservationContext | None = None
     target_position: PixelCoordinate

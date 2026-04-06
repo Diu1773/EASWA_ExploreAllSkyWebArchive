@@ -215,6 +215,57 @@ def test_run_transit_photometry_reports_real_progress(monkeypatch):
     assert events[-1] == (1.0, "Transit photometry complete.")
 
 
+def test_run_transit_photometry_reuses_preview_dataset_token(monkeypatch):
+    transit_service._preview_dataset_tokens.clear()
+
+    dataset = transit_service.CutoutDataset(
+        target_id="wasp_52_b",
+        observation_id="wasp_52_b_sector_0042",
+        sector=42,
+        camera=2,
+        ccd=3,
+        size_px=35,
+        cutout_url="",
+        times=np.asarray([1.0, 2.0, 3.0], dtype=np.float64),
+        flux_cube=np.ones((3, 20, 20), dtype=np.float32),
+        target_position=PixelCoordinate(x=10.5, y=10.5),
+        quality_flags=np.zeros(3, dtype=np.int64),
+    )
+    token = transit_service._store_preview_dataset_token(dataset)
+
+    def fail_load_cutout_dataset(*args, **kwargs):
+        raise AssertionError("cutout download should not run when preview dataset token is valid")
+
+    monkeypatch.setattr(transit_service, "_load_cutout_dataset", fail_load_cutout_dataset)
+    monkeypatch.setattr(
+        transit_service,
+        "_extract_net_flux",
+        lambda *args, **kwargs: np.asarray([10.0, 11.0, 12.0], dtype=np.float32),
+    )
+
+    events: list[tuple[float, str]] = []
+    response = transit_service.run_transit_photometry(
+        TransitPhotometryRequest(
+            target_id="wasp_52_b",
+            observation_id="wasp_52_b_sector_0042",
+            cutout_size_px=35,
+            preview_dataset_token=token,
+            target_context=TransitTargetContext(
+                ra=348.4947931,
+                dec=8.7610793,
+                period_days=1.7497798,
+            ),
+            observation_context=TransitObservationContext(sector=42, camera=2, ccd=3),
+            target_position=PixelCoordinate(x=3.5, y=3.5),
+            comparison_positions=[PixelCoordinate(x=5.5, y=5.5)],
+        ),
+        progress_callback=lambda pct, message: events.append((pct, message)),
+    )
+
+    assert response.frame_count == 3
+    assert any("Reusing cutout already loaded in step 1." in message for _, message in events)
+
+
 def test_load_cutout_dataset_reuses_recent_oversized_cutout(monkeypatch):
     transit_service._cutout_cache.clear()
     transit_service._hot_cutout_cache.clear()

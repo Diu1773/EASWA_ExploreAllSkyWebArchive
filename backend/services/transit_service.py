@@ -71,6 +71,8 @@ _TIC_TARGET_EXCLUSION_PX = 1.0
 _MAX_COMPARISON_SOURCES = 10
 _MAX_RECOMMENDED_TIC_STARS = _MAX_COMPARISON_SOURCES
 _MAX_COMPARISON_DIAGNOSTIC_POINTS = 1500
+_PREVIEW_DATASET_TOKEN_TTL_SECONDS = 3 * 60
+_PREVIEW_DATASET_TOKEN_MAX_ITEMS = 2
 
 
 _cutout_cache_lock = Lock()
@@ -78,6 +80,7 @@ _cutout_cache: "OrderedDict[tuple[str, str, int, int], CutoutDataset]" = Ordered
 _hot_cutout_cache: "OrderedDict[tuple[str, str, int, int], tuple[float, CutoutDataset]]" = (
     OrderedDict()
 )
+_preview_dataset_tokens: "OrderedDict[str, tuple[float, CutoutDataset]]" = OrderedDict()
 _preview_job_lock = Lock()
 _preview_jobs: "OrderedDict[str, dict]" = OrderedDict()
 _preview_executor = ThreadPoolExecutor(
@@ -434,6 +437,7 @@ def get_cutout_preview(
         )
 
     _notify_progress(progress_callback, 1.0, "Transit cutout preview ready.")
+    dataset_token = _store_preview_dataset_token(dataset)
 
     return TransitCutoutPreviewResponse(
         target_id=target_id,
@@ -455,6 +459,7 @@ def get_cutout_preview(
         frame_metadata=_build_frame_metadata(dataset, resolved_frame_index),
         target_position=dataset.target_position,
         image_data_url=image_data_url,
+        dataset_token=dataset_token,
         tic_stars=tic_stars,
     )
 
@@ -499,21 +504,31 @@ def run_transit_photometry(
     emit(0.02, "Resolving target and observation context.")
     target = _resolve_photometry_target(req)
     observation = _resolve_photometry_observation(req)
-    dataset = _load_cutout_dataset(
-        req.target_id,
-        req.observation_id,
-        target["ra"],
-        target["dec"],
-        observation["sector"],
-        observation.get("camera"),
-        observation.get("ccd"),
-        observation["cutout_url"],
-        _normalize_cutout_size(req.cutout_size_px),
-        progress_callback=lambda progress, message: emit(
-            0.05 + (0.5 * float(np.clip(progress, 0.0, 1.0))),
-            message,
-        ),
+    normalized_size_px = _normalize_cutout_size(req.cutout_size_px)
+    dataset = _restore_preview_dataset_token(
+        req.preview_dataset_token,
+        target_id=req.target_id,
+        observation_id=req.observation_id,
+        size_px=normalized_size_px,
     )
+    if dataset is not None:
+        emit(0.12, "Reusing cutout already loaded in step 1.")
+    else:
+        dataset = _load_cutout_dataset(
+            req.target_id,
+            req.observation_id,
+            target["ra"],
+            target["dec"],
+            observation["sector"],
+            observation.get("camera"),
+            observation.get("ccd"),
+            observation["cutout_url"],
+            normalized_size_px,
+            progress_callback=lambda progress, message: emit(
+                0.05 + (0.5 * float(np.clip(progress, 0.0, 1.0))),
+                message,
+            ),
+        )
 
     emit(0.58, "Preparing apertures and cadence filters.")
     target_aperture, comparison_apertures = _resolve_aperture_requests(req, dataset)
@@ -1167,6 +1182,54 @@ def _prune_hot_cutout_cache() -> None:
     ]
     for cache_key in expired:
         _hot_cutout_cache.pop(cache_key, None)
+
+
+def _store_preview_dataset_token(dataset: CutoutDataset) -> str:
+    token = uuid.uuid4().hex
+    with _cutout_cache_lock:
+        _prune_preview_dataset_tokens()
+        _preview_dataset_tokens[token] = (time.time(), dataset)
+        while len(_preview_dataset_tokens) > _PREVIEW_DATASET_TOKEN_MAX_ITEMS:
+            _preview_dataset_tokens.popitem(last=False)
+    return token
+
+
+def _restore_preview_dataset_token(
+    token: str | None,
+    *,
+    target_id: str,
+    observation_id: str,
+    size_px: int,
+) -> CutoutDataset | None:
+    if not token:
+        return None
+
+    with _cutout_cache_lock:
+        _prune_preview_dataset_tokens()
+        entry = _preview_dataset_tokens.get(token)
+        if entry is None:
+            return None
+        created_at, dataset = entry
+        if (
+            dataset.target_id != target_id
+            or dataset.observation_id != observation_id
+            or dataset.size_px != size_px
+        ):
+            return None
+        _preview_dataset_tokens.move_to_end(token)
+        _preview_dataset_tokens[token] = (created_at, dataset)
+        return dataset
+
+
+def _prune_preview_dataset_tokens() -> None:
+    now = time.time()
+    expired = [
+        token
+        for token, (created_at, _) in _preview_dataset_tokens.items()
+        if now - created_at > _PREVIEW_DATASET_TOKEN_TTL_SECONDS
+    ]
+    for token in expired:
+        _preview_dataset_tokens.pop(token, None)
 
 
 def _dataset_nbytes(dataset: CutoutDataset) -> int:
