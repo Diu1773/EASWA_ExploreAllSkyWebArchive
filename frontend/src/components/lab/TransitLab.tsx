@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
-  cancelTransitPreviewJob,
-  createTransitPreviewJob,
   fetchMyRecordSubmission,
-  fetchTransitCutoutPreview,
-  fetchTransitPreviewJob,
   fetchRecordTemplate,
-  fitTransitModelStreaming,
-  runTransitPhotometryStreaming,
   submitRecordTemplate,
 } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
@@ -27,7 +21,6 @@ import { useWorkflowController } from '../../hooks/useWorkflowController';
 import type { WorkflowSessionSource } from '../../utils/workflowSession';
 import {
   createTransitWorkflowDefinition,
-  normalizeTransitFitResponse,
   type PersistedTransitLabState,
   type TransitFitDataSource,
   type TransitStepAvailability,
@@ -43,9 +36,11 @@ import {
   buildFitResidualCurve,
   buildLightCurveFromFitResult,
   buildPhaseFoldedLightCurve,
-  computeDefaultBjdWindow,
   estimatePhaseFoldReferenceT0,
 } from '../../workflows/transit/lightCurve';
+import { useTransitPreview } from '../../workflows/transit/hooks/useTransitPreview';
+import { useTransitPhotometry } from '../../workflows/transit/hooks/useTransitPhotometry';
+import { useTransitFit } from '../../workflows/transit/hooks/useTransitFit';
 import {
   createInitialTransitLabState,
   transitLabReducer,
@@ -213,10 +208,6 @@ export function TransitLab({
 
 
   // ── Refs (side-effects only, not in reducer) ─────────────────────────
-  const previewJobIdRef = useRef<string | null>(null);
-  const previewPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const framePreviewAbortRef = useRef<AbortController | null>(null);
-  const runAbortRef = useRef<AbortController | null>(null);
   const recordTemplateRequestedRef = useRef(false);
   const loadedRecordIdRef = useRef<number | null>(null);
   const restoringSessionPreviewRef = useRef(false);
@@ -228,7 +219,6 @@ export function TransitLab({
   const selectedObservations = observations.filter((obs) =>
     selectedIds.includes(obs.id)
   );
-  const comparisonDiagnostics = result?.comparison_diagnostics ?? [];
   const fitEngineLabel = fitResult
     ? `${fitResult.used_batman ? 'batman transit model' : 'simplified transit model'} · ${
         fitResult.used_mcmc ? 'emcee MCMC posterior' : 'least-squares optimization'
@@ -248,22 +238,7 @@ export function TransitLab({
   const persistedTargetPosition =
     targetPositionOffset ?? preview?.target_position ?? result?.target_position ?? null;
 
-  // ── Effects: cleanup, hydration ──────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      if (previewPollTimeoutRef.current) {
-        clearTimeout(previewPollTimeoutRef.current);
-        previewPollTimeoutRef.current = null;
-      }
-      const previewJobId = previewJobIdRef.current;
-      if (previewJobId) {
-        cancelTransitPreviewJob(previewJobId).catch(() => undefined);
-      }
-      framePreviewAbortRef.current?.abort();
-      runAbortRef.current?.abort();
-    };
-  }, []);
-
+  // ── Effects: hydration ───────────────────────────────────────────────
   useEffect(() => {
     if (observationSelectionHydrated) return;
     const unsubscribe = useAppStore.persist.onFinishHydration(() => {
@@ -391,6 +366,54 @@ export function TransitLab({
     },
   });
 
+  // ── Early derived values (needed by hooks below) ────────────────────
+  const effectiveTargetPosition: PixelCoordinate | null =
+    targetPositionOffset ?? preview?.target_position ?? result?.target_position ?? null;
+  const activeObservation =
+    selectedObservations.find((obs) => obs.id === activeObservationId) ?? null;
+  const comparisonDiagnostics = result?.comparison_diagnostics ?? [];
+
+  // ── Custom hooks ─────────────────────────────────────────────────────
+  const { cancelAll: cancelPreviewJobs } = useTransitPreview({
+    workflowHydrated,
+    step,
+    activeObservationId,
+    cutoutSizePx,
+    selectedFrameIndex,
+    targetPositionOffset,
+    preview,
+    result,
+    target,
+    restoringSessionPreviewRef,
+    replaceStep,
+    patch,
+  });
+
+  const {
+    abortRun,
+    handleRunPhotometry,
+    handleStop,
+    handleToggleQcComparison,
+    handleSelectAllQcComparisons,
+    handleApplyComparisonQc,
+  } = useTransitPhotometry({
+    activeObservationId,
+    cutoutSizePx,
+    effectiveTargetPosition,
+    targetAperture,
+    comparisonStars,
+    comparisonDiagnostics,
+    qcIncludedComparisonLabels,
+    preview,
+    result,
+    target,
+    activeObservation,
+    suppressAnalysisInvalidationRef,
+    replaceStep,
+    patch,
+    dispatch,
+  });
+
   // ── Invalidation dispatcher ──────────────────────────────────────────
   const applyTransitInvalidation = useCallback(
     (action: TransitInvalidationAction) => {
@@ -400,21 +423,8 @@ export function TransitLab({
       );
 
       // Side effects: cancel in-flight async work
-      if (resolution.cancelPreviewJobs) {
-        if (previewPollTimeoutRef.current) {
-          clearTimeout(previewPollTimeoutRef.current);
-          previewPollTimeoutRef.current = null;
-        }
-        const previewJobId = previewJobIdRef.current;
-        previewJobIdRef.current = null;
-        if (previewJobId) {
-          cancelTransitPreviewJob(previewJobId).catch(() => undefined);
-        }
-        framePreviewAbortRef.current?.abort();
-      }
-      if (resolution.abortPhotometryRun) {
-        runAbortRef.current?.abort();
-      }
+      if (resolution.cancelPreviewJobs) cancelPreviewJobs();
+      if (resolution.abortPhotometryRun) abortRun();
       if (resolution.clearPreviewRuntime) {
         restoringSessionPreviewRef.current = false;
       }
@@ -431,7 +441,7 @@ export function TransitLab({
         replaceStep(resolution.nextStep);
       }
     },
-    [currentDefaults, replaceStep, result, step],
+    [abortRun, cancelPreviewJobs, currentDefaults, replaceStep, result, step],
   );
 
   useEffect(() => {
@@ -589,294 +599,7 @@ export function TransitLab({
     applyTransitInvalidation({ type: 'observation-changed' });
   }, [activeObservationId, applyTransitInvalidation, workflowHydrated]);
 
-  // Fetch cutout preview
-  useEffect(() => {
-    if (!workflowHydrated) return;
-    const stepNeedsPreview =
-      step === 'select' ||
-      (step === 'run' &&
-        preview === null &&
-        result === null &&
-        targetPositionOffset === null);
-    const shouldDeferRestoredPreview =
-      restoringSessionPreviewRef.current &&
-      result !== null &&
-      preview === null &&
-      !stepNeedsPreview;
-
-    const clearPreviewRuntime = { previewLoading: false, framePreviewLoading: false, previewProgress: 0, previewMessage: null } as const;
-
-    if (shouldDeferRestoredPreview) {
-      patch(clearPreviewRuntime);
-      return;
-    }
-
-    if (!stepNeedsPreview) {
-      patch(clearPreviewRuntime);
-      return;
-    }
-
-    if (!activeObservationId || cutoutSizePx === null) {
-      if (previewPollTimeoutRef.current) {
-        clearTimeout(previewPollTimeoutRef.current);
-        previewPollTimeoutRef.current = null;
-      }
-      const previewJobId = previewJobIdRef.current;
-      previewJobIdRef.current = null;
-      if (previewJobId) cancelTransitPreviewJob(previewJobId).catch(() => undefined);
-      framePreviewAbortRef.current?.abort();
-      patch({ preview: null, ...clearPreviewRuntime });
-      return;
-    }
-
-    const currentFrameIndex = selectedFrameIndex ?? preview?.frame_index ?? null;
-    const canReuse =
-      preview !== null &&
-      preview.observation_id === activeObservationId &&
-      preview.cutout_size_px >= cutoutSizePx &&
-      preview.frame_index === currentFrameIndex;
-
-    if (canReuse) {
-      patch({
-        previewLoading: false,
-        previewProgress: 1,
-        previewMessage:
-          currentFrameIndex !== null
-            ? `Using loaded frame ${currentFrameIndex + 1} from ${preview.cutout_size_px}px cutout.`
-            : `Using loaded ${preview.cutout_size_px}px cutout.`,
-      });
-      return;
-    }
-
-    const requestSizePx =
-      preview !== null &&
-      preview.observation_id === activeObservationId &&
-      preview.cutout_size_px >= cutoutSizePx
-        ? preview.cutout_size_px
-        : cutoutSizePx;
-
-    const canRefreshFrameOnly =
-      preview !== null &&
-      preview.observation_id === activeObservationId &&
-      preview.cutout_size_px >= cutoutSizePx;
-    const preserveRestoredState = restoringSessionPreviewRef.current;
-
-    patch({ errorMessage: null });
-
-    if (previewPollTimeoutRef.current) {
-      clearTimeout(previewPollTimeoutRef.current);
-      previewPollTimeoutRef.current = null;
-    }
-    const previousJobId = previewJobIdRef.current;
-    previewJobIdRef.current = null;
-    if (previousJobId) cancelTransitPreviewJob(previousJobId).catch(() => undefined);
-    framePreviewAbortRef.current?.abort();
-
-    if (canRefreshFrameOnly) {
-      patch({
-        framePreviewLoading: true,
-        previewMessage:
-          currentFrameIndex !== null
-            ? `Loading frame ${currentFrameIndex + 1}...`
-            : 'Loading selected frame...',
-      });
-      const controller = new AbortController();
-      framePreviewAbortRef.current = controller;
-      fetchTransitCutoutPreview(
-        target.id,
-        activeObservationId,
-        requestSizePx,
-        currentFrameIndex,
-        controller.signal
-      )
-        .then((response) => {
-          if (framePreviewAbortRef.current !== controller) return;
-          restoringSessionPreviewRef.current = false;
-          patch({
-            preview: response,
-            previewMessage:
-              response.frame_index !== null
-                ? `Viewing frame ${response.frame_index + 1} / ${response.frame_count}.`
-                : 'Preview ready.',
-            ...(selectedFrameIndex === null && response.frame_index !== null
-              ? { selectedFrameIndex: response.frame_index }
-              : {}),
-          });
-        })
-        .catch((error) => {
-          if (controller.signal.aborted) return;
-          console.error('Failed to refresh transit preview frame', error);
-          patch({
-            errorMessage:
-              error instanceof Error ? error.message : 'Failed to load selected frame.',
-          });
-        })
-        .finally(() => {
-          patch({ framePreviewLoading: false });
-          if (framePreviewAbortRef.current === controller) {
-            framePreviewAbortRef.current = null;
-          }
-        });
-      return;
-    }
-
-    patch({
-      previewLoading: true,
-      framePreviewLoading: false,
-      previewProgress: 0,
-      previewMessage:
-        currentFrameIndex !== null
-          ? `Loading frame ${currentFrameIndex + 1}...`
-          : 'Queued preview request.',
-      preview: null,
-      ...(preserveRestoredState
-        ? {}
-        : {
-            result: null,
-            fitResult: null,
-            progress: 0,
-            runProgressEvent: null,
-            comparisonStars: [],
-            targetPositionOffset: null,
-            selectedStar: 'T' as const,
-          }),
-    });
-    if (!preserveRestoredState) {
-      replaceStep('select');
-    }
-
-    const loadPreviewInlineFallback = async (message: string) => {
-      try {
-        patch({ previewMessage: message });
-        const response = await fetchTransitCutoutPreview(
-          target.id,
-          activeObservationId,
-          requestSizePx,
-          currentFrameIndex
-        );
-        if (previewJobIdRef.current !== null) {
-          return;
-        }
-        restoringSessionPreviewRef.current = false;
-        patch({
-          preview: response,
-          previewLoading: false,
-          previewProgress: 1,
-          previewMessage:
-            response.frame_index !== null
-              ? `Viewing frame ${response.frame_index + 1} / ${response.frame_count}.`
-              : 'Preview ready.',
-          ...(selectedFrameIndex === null && response.frame_index !== null
-            ? { selectedFrameIndex: response.frame_index }
-            : {}),
-        });
-      } catch (fallbackError) {
-        console.error('Failed to recover transit preview inline', fallbackError);
-        restoringSessionPreviewRef.current = false;
-        patch({
-          errorMessage:
-            fallbackError instanceof Error
-              ? fallbackError.message
-              : 'Failed to recover TESS cutout preview.',
-          preview: null,
-          previewLoading: false,
-        });
-      }
-    };
-
-    const pollPreviewJob = async (jobId: string) => {
-      try {
-        const job = await fetchTransitPreviewJob(jobId);
-        if (previewJobIdRef.current !== jobId) return;
-
-        patch({ previewProgress: job.progress, previewMessage: job.message });
-
-        if (job.status === 'completed' && job.result) {
-          restoringSessionPreviewRef.current = false;
-          previewPollTimeoutRef.current = null;
-          previewJobIdRef.current = null;
-          patch({
-            preview: job.result,
-            previewLoading: false,
-            previewProgress: 1,
-            ...(selectedFrameIndex === null && job.result.frame_index !== null
-              ? { selectedFrameIndex: job.result.frame_index }
-              : {}),
-          });
-          return;
-        }
-
-        if (job.status === 'failed') {
-          restoringSessionPreviewRef.current = false;
-          previewPollTimeoutRef.current = null;
-          previewJobIdRef.current = null;
-          patch({
-            preview: null,
-            previewLoading: false,
-            errorMessage: job.error ?? 'Failed to load TESS cutout preview.',
-          });
-          return;
-        }
-
-        if (job.status === 'cancelled') {
-          restoringSessionPreviewRef.current = false;
-          previewPollTimeoutRef.current = null;
-          previewJobIdRef.current = null;
-          patch({
-            preview: null,
-            previewLoading: false,
-            errorMessage: 'Transit preview loading stopped.',
-          });
-          return;
-        }
-
-        previewPollTimeoutRef.current = setTimeout(() => {
-          void pollPreviewJob(jobId);
-        }, 400);
-      } catch (error) {
-        if (previewJobIdRef.current !== jobId) return;
-        const isMissingPreviewJob =
-          error instanceof Error &&
-          /preview job not found|GET \/transit\/preview-jobs\/.* failed: 404/i.test(error.message);
-        previewPollTimeoutRef.current = null;
-        previewJobIdRef.current = null;
-        if (isMissingPreviewJob) {
-          void loadPreviewInlineFallback('Preview state expired. Recovering cutout directly...');
-          return;
-        }
-        console.error('Failed to poll transit preview job', error);
-        restoringSessionPreviewRef.current = false;
-        patch({
-          errorMessage:
-            error instanceof Error ? error.message : 'Failed to monitor TESS cutout preview.',
-          preview: null,
-          previewLoading: false,
-        });
-      }
-    };
-
-    createTransitPreviewJob(target.id, activeObservationId, requestSizePx, currentFrameIndex)
-      .then((job) => {
-        previewJobIdRef.current = job.job_id;
-        patch({ previewProgress: job.progress, previewMessage: job.message });
-        void pollPreviewJob(job.job_id);
-      })
-      .catch((error) => {
-        console.error('Failed to start transit preview job', error);
-        previewJobIdRef.current = null;
-        void loadPreviewInlineFallback('Preview job failed. Loading cutout directly...');
-      });
-  }, [
-    activeObservationId,
-    cutoutSizePx,
-    preview,
-    result,
-    selectedFrameIndex,
-    step,
-    target.id,
-    targetPositionOffset,
-    workflowHydrated,
-  ]);
+  // NOTE: cutout preview effect lives in useTransitPreview hook.
 
   useEffect(() => {
     if (!result) {
@@ -889,39 +612,7 @@ export function TransitLab({
     }
   }, [result, target.name, recordTitle]);
 
-  // Auto-enable fold when result arrives and target has a known period
-  useEffect(() => {
-    if (result && target.period_days) {
-      patch({
-        ...(foldPeriod === null ? { foldPeriod: target.period_days } : {}),
-        ...(!foldEnabled ? { foldEnabled: true } : {}),
-      });
-    }
-  }, [result, target.period_days]);
-
-  useEffect(() => {
-    if (!result) return;
-    const times = result.light_curve.points.map((point) => point.hjd).filter(Number.isFinite);
-    if (times.length === 0) return;
-    const minTime = Math.min(...times);
-    const maxTime = Math.max(...times);
-    const windowInvalid =
-      bjdWindowStart === null ||
-      bjdWindowEnd === null ||
-      !Number.isFinite(bjdWindowStart) ||
-      !Number.isFinite(bjdWindowEnd) ||
-      bjdWindowEnd <= bjdWindowStart ||
-      bjdWindowStart < minTime ||
-      bjdWindowEnd > maxTime;
-
-    if (!windowInvalid) return;
-    const defaultWindow = computeDefaultBjdWindow(
-      result.light_curve.points,
-      foldPeriod ?? target.period_days ?? result.light_curve.period_days
-    );
-    if (!defaultWindow) return;
-    patch({ bjdWindowStart: defaultWindow.start, bjdWindowEnd: defaultWindow.end });
-  }, [result, foldPeriod, target.period_days, bjdWindowStart, bjdWindowEnd]);
+  // NOTE: auto-fold and auto-BJD-window effects live in useTransitFit hook.
 
   useEffect(() => {
     if (recordLoading || recordTemplateRequestedRef.current) return;
@@ -1001,10 +692,6 @@ export function TransitLab({
       qcIncludedComparisonLabels: comparisonDiagnostics.map((diagnostic) => diagnostic.label),
     });
   }, [result]);
-
-  // Effective target position (original or user-dragged)
-  const effectiveTargetPosition: PixelCoordinate | null =
-    targetPositionOffset ?? preview?.target_position ?? result?.target_position ?? null;
 
   // Build star overlay array for the cutout viewer
   const buildStarOverlays = (): StarOverlay[] => {
@@ -1315,163 +1002,9 @@ export function TransitLab({
     }
   };
 
-  const runTransitPhotometryForComparisons = async (
-    stars: ComparisonStar[],
-    nextStepAfterSuccess: TransitStep | null = null
-  ): Promise<TransitPhotometryResponse | null> => {
-    const photometryTargetPosition = effectiveTargetPosition ?? result?.target_position ?? null;
-
-    if (!activeObservationId || cutoutSizePx === null || !photometryTargetPosition) {
-      patch({ errorMessage: 'Missing cutout setup for transit photometry.' });
-      return null;
-    }
-
-    const observationContext =
-      preview !== null
-        ? {
-            sector: preview.sector,
-            camera: preview.camera,
-            ccd: preview.ccd,
-          }
-        : activeObservation?.sector !== null && activeObservation?.sector !== undefined
-          ? {
-              sector: activeObservation.sector,
-              camera: activeObservation.camera ?? null,
-              ccd: activeObservation.ccd ?? null,
-            }
-          : undefined;
-
-    patch({
-      running: true,
-      errorMessage: null,
-      progress: 0,
-      runProgressEvent: {
-        type: 'progress',
-        pct: 0,
-        message: 'Starting transit photometry...',
-      },
-    });
-
-    runAbortRef.current?.abort();
-    const controller = new AbortController();
-    runAbortRef.current = controller;
-
-    try {
-      const response = await runTransitPhotometryStreaming(
-        {
-          target_id: target.id,
-          observation_id: activeObservationId,
-          cutout_size_px: cutoutSizePx,
-          preview_dataset_token:
-            preview?.observation_id === activeObservationId &&
-            preview.cutout_size_px === cutoutSizePx
-              ? preview.dataset_token ?? null
-              : null,
-          target_context: {
-            ra: target.ra,
-            dec: target.dec,
-            period_days: target.period_days,
-          },
-          observation_context: observationContext,
-          target_position: photometryTargetPosition,
-          comparison_positions: stars.map((cs) => cs.position),
-          aperture_radius: targetAperture.apertureRadius,
-          inner_annulus: targetAperture.innerAnnulus,
-          outer_annulus: targetAperture.outerAnnulus,
-          target_aperture: toTransitApertureConfig(
-            photometryTargetPosition,
-            targetAperture
-          ),
-          comparison_apertures: stars.map((cs) =>
-            toTransitApertureConfig(cs.position, cs.aperture)
-          ),
-        },
-        (event) => {
-          patch({
-            runProgressEvent: event,
-            progress: Math.max(0, Math.min(100, Math.round((event.pct ?? 0) * 100))),
-          });
-        },
-        controller.signal
-      );
-      patch({
-        progress: 100,
-        runProgressEvent: {
-          type: 'progress',
-          pct: 1,
-          message: 'Transit photometry complete.',
-        },
-        result: response,
-      });
-      if (nextStepAfterSuccess) {
-        replaceStep(nextStepAfterSuccess);
-      }
-      return response;
-    } catch (error) {
-      patch({ progress: 0, runProgressEvent: null });
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        patch({ errorMessage: 'Photometry stopped.' });
-        return null;
-      }
-      console.error('Transit photometry run failed', error);
-      patch({
-        errorMessage:
-          error instanceof Error ? error.message : 'Transit photometry failed.',
-      });
-      return null;
-    } finally {
-      patch({ running: false });
-      if (runAbortRef.current === controller) runAbortRef.current = null;
-    }
-  };
-
-  const handleRunPhotometry = async () => {
-    await runTransitPhotometryForComparisons(comparisonStars);
-  };
-
-  const handleToggleQcComparison = (label: string) => {
-    dispatch({
-      type: 'update',
-      updater: (s) => {
-        if (s.qcIncludedComparisonLabels.includes(label)) {
-          return { qcIncludedComparisonLabels: s.qcIncludedComparisonLabels.filter((item) => item !== label) };
-        }
-        return {
-          qcIncludedComparisonLabels: [...s.qcIncludedComparisonLabels, label].sort((left, right) => {
-            const leftIndex = parseInt(left.slice(1), 10);
-            const rightIndex = parseInt(right.slice(1), 10);
-            return leftIndex - rightIndex;
-          }),
-        };
-      },
-    });
-  };
-
-  const handleSelectAllQcComparisons = () => {
-    patch({ qcIncludedComparisonLabels: comparisonDiagnostics.map((diagnostic) => diagnostic.label) });
-  };
-
-  const handleApplyComparisonQc = async () => {
-    const retainedComparisons = comparisonStars.filter((_, index) =>
-      qcIncludedComparisonLabels.includes(`C${index + 1}`)
-    );
-    if (retainedComparisons.length === 0) {
-      patch({ errorMessage: 'Keep at least one comparison star before re-running photometry.' });
-      return;
-    }
-
-    patch({ progress: 0, runProgressEvent: null });
-    const response = await runTransitPhotometryForComparisons(retainedComparisons, 'comparisonqc');
-    if (response) {
-      suppressAnalysisInvalidationRef.current = true;
-      patch({ fitResult: null, comparisonStars: retainedComparisons, selectedStar: 'T' });
-    }
-  };
-
-  const handleStop = () => {
-    runAbortRef.current?.abort();
-    patch({ running: false, progress: 0, runProgressEvent: null, errorMessage: 'Photometry stopped.' });
-  };
+  // NOTE: runTransitPhotometryForComparisons, handleRunPhotometry, handleStop,
+  // handleToggleQcComparison, handleSelectAllQcComparisons, handleApplyComparisonQc
+  // live in useTransitPhotometry hook.
 
   const handleReset = () => {
     clearPersistedWorkflow();
@@ -1513,143 +1046,6 @@ export function TransitLab({
     if (prevIndex >= 0) setStep(stepOrder[prevIndex]);
   };
 
-  const handleFitTransit = async () => {
-    if (!result) return;
-    if (roiPoints.length < 20) {
-      patch({ errorMessage: 'The Step 4 ROI retained too few points for transit fitting.' });
-      return;
-    }
-    const fitPeriod =
-      foldPeriod ?? target.period_days ?? result.light_curve.period_days ?? null;
-    if (!fitPeriod) return;
-
-    const resolvedBjdStart =
-      bjdWindowStart !== null && bjdWindowEnd !== null
-        ? Math.min(bjdWindowStart, bjdWindowEnd)
-        : null;
-    const resolvedBjdEnd =
-      bjdWindowStart !== null && bjdWindowEnd !== null
-        ? Math.max(bjdWindowStart, bjdWindowEnd)
-        : null;
-    const fitT0 =
-      fitDataSource === 'bjd_window' && resolvedBjdStart !== null && resolvedBjdEnd !== null
-        ? 0.5 * (resolvedBjdStart + resolvedBjdEnd)
-        : phaseFoldReferenceT0;
-    const resolvedFilterName =
-      activeObservation?.mission === 'TESS'
-        ? 'TESS'
-        : activeObservation?.filter_band?.trim() || null;
-    const roiTimes = roiPoints.map((point) => point.hjd).filter(Number.isFinite);
-    const roiFluxes = roiPoints.map((point) => point.magnitude).filter(Number.isFinite);
-    const roiErrors = roiPoints.map((point) => point.mag_error).filter(Number.isFinite);
-
-    patch({
-      fitting: true,
-      errorMessage: null,
-      fitResult: null,
-      fitProgress: null,
-      fitDebugRequest: {
-        fitMode: fitDataSource,
-        period: fitPeriod,
-        t0: fitT0,
-        filterName: resolvedFilterName,
-        stellarTemperature:
-          typeof target.stellar_temperature === 'number' ? target.stellar_temperature : null,
-        stellarLogg: typeof target.stellar_logg === 'number' ? target.stellar_logg : null,
-        stellarMetallicity:
-          typeof target.stellar_metallicity === 'number' ? target.stellar_metallicity : null,
-        bjdStart: fitDataSource === 'bjd_window' ? resolvedBjdStart : null,
-        bjdEnd: fitDataSource === 'bjd_window' ? resolvedBjdEnd : null,
-        requestedFitWindowPhase,
-        baselineOrder: fitBaselineOrder,
-        sigmaClipSigma: fitSigmaClipSigma,
-        sigmaClipIterations: fitSigmaClipIterations,
-        roiPointCount: roiPoints.length,
-        roiTimeMin: roiTimes.length > 0 ? Math.min(...roiTimes) : null,
-        roiTimeMax: roiTimes.length > 0 ? Math.max(...roiTimes) : null,
-        roiFluxMin: roiFluxes.length > 0 ? Math.min(...roiFluxes) : null,
-        roiFluxMax: roiFluxes.length > 0 ? Math.max(...roiFluxes) : null,
-        roiErrorMin: roiErrors.length > 0 ? Math.min(...roiErrors) : null,
-        roiErrorMax: roiErrors.length > 0 ? Math.max(...roiErrors) : null,
-      },
-      fitDebugLog: [
-        `init mode=${fitDataSource} period=${fitPeriod.toFixed(6)} t0=${fitT0.toFixed(6)} points=${roiPoints.length}`,
-      ],
-    });
-    try {
-      const response = await fitTransitModelStreaming(
-        {
-          target_id: target.id,
-          period: fitPeriod,
-          t0: fitT0,
-          fit_mode: fitDataSource,
-          bjd_start: fitDataSource === 'bjd_window' ? resolvedBjdStart : null,
-          bjd_end: fitDataSource === 'bjd_window' ? resolvedBjdEnd : null,
-          fit_limb_darkening: fitLimbDarkening,
-          fit_window_phase: requestedFitWindowPhase,
-          baseline_order: fitBaselineOrder,
-          sigma_clip_sigma: fitSigmaClipSigma,
-          sigma_clip_iterations: fitSigmaClipIterations,
-          filter_name: resolvedFilterName,
-          stellar_temperature:
-            typeof target.stellar_temperature === 'number' ? target.stellar_temperature : null,
-          stellar_logg: typeof target.stellar_logg === 'number' ? target.stellar_logg : null,
-          stellar_metallicity:
-            typeof target.stellar_metallicity === 'number' ? target.stellar_metallicity : null,
-          points: roiPoints,
-        },
-        (event) => {
-          patch({ fitProgress: event });
-          dispatch({
-            type: 'append-fit-debug-log',
-            lines: [
-              `${event.stage} pct=${((event.pct ?? 0) * 100).toFixed(0)}${event.step && event.total ? ` step=${event.step}/${event.total}` : ''}`,
-            ],
-          });
-        },
-      );
-      const normalizedResponse = normalizeTransitFitResponse(response);
-      if (!normalizedResponse) {
-        throw new Error(
-          'Transit fit response is missing the updated timing metadata. Restart the backend and run the fit again.'
-        );
-      }
-      const responseModel =
-        normalizedResponse.data_flux.length === normalizedResponse.residuals.length
-          ? normalizedResponse.data_flux.map(
-              (value: number, index: number) =>
-                value - normalizedResponse.residuals[index]
-            )
-          : [];
-      dispatch({
-        type: 'append-fit-debug-log',
-        lines: [
-          `result rp_rs=${normalizedResponse.fitted_params.rp_rs.toFixed(5)} a_rs=${normalizedResponse.fitted_params.a_rs.toFixed(2)} inc=${normalizedResponse.fitted_params.inclination.toFixed(2)} t0=${normalizedResponse.t0.toFixed(6)} ref_t0=${normalizedResponse.reference_t0.toFixed(6)} retained=${normalizedResponse.preprocessing.retained_points}`,
-          responseModel.length > 0
-            ? `model flux min=${Math.min(...responseModel).toFixed(6)} max=${Math.max(...responseModel).toFixed(6)}`
-            : 'model flux unavailable',
-        ],
-      });
-      patch({ fitResult: normalizedResponse });
-    } catch (error) {
-      console.error('Transit fitting failed', error);
-      dispatch({
-        type: 'append-fit-debug-log',
-        lines: [
-          `error ${error instanceof Error ? error.message : 'Transit model fitting failed.'}`,
-        ],
-      });
-      patch({
-        errorMessage:
-          error instanceof Error ? error.message : 'Transit model fitting failed.',
-      });
-    } finally {
-      patch({ fitting: false, fitProgress: null });
-    }
-  };
-
-  const activeObservation =
-    selectedObservations.find((obs) => obs.id === activeObservationId) ?? null;
   const cutoutArcmin =
     cutoutSizePx !== null ? ((cutoutSizePx * 21) / 60).toFixed(1) : null;
   const loadedCutoutArcmin = preview
@@ -1772,6 +1168,31 @@ export function TransitLab({
             fitResult.residuals.length
         )
       : null;
+
+  // ── Transit fit hook (needs derived values above) ────────────────────
+  const { handleFitTransit } = useTransitFit({
+    result,
+    target,
+    activeObservation,
+    roiPoints,
+    foldEnabled,
+    foldPeriod,
+    foldT0,
+    foldT0Auto,
+    fitDataSource,
+    fitLimbDarkening,
+    fitWindowPhase,
+    fitBaselineOrder,
+    fitSigmaClipSigma,
+    fitSigmaClipIterations,
+    fitResult,
+    bjdWindowStart,
+    bjdWindowEnd,
+    phaseFoldReferenceT0,
+    requestedFitWindowPhase,
+    patch,
+    dispatch,
+  });
 
   const selectedAperture = getSelectedAperture();
   const draftStatusLabel =
