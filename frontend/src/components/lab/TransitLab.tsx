@@ -78,9 +78,13 @@ const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
 
 const DEV_CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99] as const;
 const PROD_CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45] as const;
-const CUTOUT_SIZE_OPTIONS = import.meta.env.DEV
-  ? DEV_CUTOUT_SIZE_OPTIONS
-  : PROD_CUTOUT_SIZE_OPTIONS;
+const CUTOUT_SIZE_OPTIONS =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? DEV_CUTOUT_SIZE_OPTIONS
+    : import.meta.env.DEV
+      ? DEV_CUTOUT_SIZE_OPTIONS
+      : PROD_CUTOUT_SIZE_OPTIONS;
 
 const DEFAULT_APERTURE: ApertureParams = {
   apertureRadius: 2.5,
