@@ -19,6 +19,7 @@ export function MyAnalyses() {
   const user = useAuthStore((s) => s.user);
   const [records, setRecords] = useState<RecordListItem[]>([]);
   const [drafts, setDrafts] = useState<WorkflowDraftItem[]>([]);
+  const [activeTab, setActiveTab] = useState<'drafts' | 'records'>('drafts');
   const [loading, setLoading] = useState(false);
   const [pendingDeleteTarget, setPendingDeleteTarget] = useState<PendingDeleteTarget>(null);
   const [activeAction, setActiveAction] = useState<{
@@ -65,6 +66,16 @@ export function MyAnalyses() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [pendingDeleteTarget, activeAction]);
+
+  useEffect(() => {
+    if (activeTab === 'drafts' && drafts.length === 0 && records.length > 0) {
+      setActiveTab('records');
+      return;
+    }
+    if (activeTab === 'records' && records.length === 0 && drafts.length > 0) {
+      setActiveTab('drafts');
+    }
+  }, [activeTab, drafts.length, records.length]);
 
   const handleDownloadCsv = async (recordId: number) => {
     setErrorMessage(null);
@@ -150,7 +161,39 @@ export function MyAnalyses() {
         </div>
       )}
 
-      {!loading && drafts.length > 0 && (
+      {!loading && !errorMessage && (drafts.length > 0 || records.length > 0) && (
+        <div className="analysis-tab-row" role="tablist" aria-label="Saved analysis sections">
+          <button
+            type="button"
+            className={`analysis-tab ${activeTab === 'drafts' ? 'active' : ''}`}
+            onClick={() => setActiveTab('drafts')}
+            role="tab"
+            aria-selected={activeTab === 'drafts'}
+          >
+            Drafts
+            <span className="analysis-tab-count">{drafts.length}</span>
+          </button>
+          <button
+            type="button"
+            className={`analysis-tab ${activeTab === 'records' ? 'active' : ''}`}
+            onClick={() => setActiveTab('records')}
+            role="tab"
+            aria-selected={activeTab === 'records'}
+          >
+            Records
+            <span className="analysis-tab-count">{records.length}</span>
+          </button>
+        </div>
+      )}
+
+      {!loading && activeTab === 'drafts' && drafts.length === 0 && records.length > 0 && (
+        <div className="page-empty-state analysis-tab-empty">
+          <strong>No drafts right now</strong>
+          <p>Saved records are available in the Records tab.</p>
+        </div>
+      )}
+
+      {!loading && activeTab === 'drafts' && drafts.length > 0 && (
         <>
           <h3 className="settings-section">Drafts</h3>
           <div className="analysis-record-list">
@@ -211,7 +254,14 @@ export function MyAnalyses() {
         </>
       )}
 
-      {!loading && records.length > 0 && (
+      {!loading && activeTab === 'records' && records.length === 0 && drafts.length > 0 && (
+        <div className="page-empty-state analysis-tab-empty">
+          <strong>No records yet</strong>
+          <p>Continue a draft and submit the final record form when the analysis is ready.</p>
+        </div>
+      )}
+
+      {!loading && activeTab === 'records' && records.length > 0 && (
         <>
           <h3 className="settings-section">Records</h3>
           <div className="analysis-record-list">
