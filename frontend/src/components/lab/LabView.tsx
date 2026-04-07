@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { fetchTarget, fetchObservations, runPhotometry, buildLightCurve } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
 import { useAuthStore } from '../../stores/useAuthStore';
@@ -16,8 +16,14 @@ import type {
 } from '../../types/photometry';
 import { buildDssPreviewUrl } from '../../utils/surveys';
 
+// Map topic_id → workflow identifier
+const TOPIC_WORKFLOW: Record<string, string> = {
+  exoplanet_transit: 'transit',
+};
+
 export function LabView() {
   const { targetId } = useParams<{ targetId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [target, setTarget] = useState<Target | null>(null);
   const [observations, setObservations] = useState<Observation[]>([]);
   const [measurements, setMeasurements] = useState<PhotometryMeasurement[]>([]);
@@ -31,7 +37,23 @@ export function LabView() {
   const inner = useAppStore((s) => s.innerAnnulus);
   const outer = useAppStore((s) => s.outerAnnulus);
   const user = useAuthStore((s) => s.user);
-  const isTransitTarget = target?.topic_id === 'exoplanet_transit';
+
+  // Resolve workflow: prefer ?workflow= URL param (so back/forward works before
+  // target data loads), fall back to topic_id once target is available.
+  const workflowParam = searchParams.get('workflow');
+  const topicWorkflow = target?.topic_id ? (TOPIC_WORKFLOW[target.topic_id] ?? null) : null;
+  const resolvedWorkflow = workflowParam ?? topicWorkflow;
+
+  // Stamp ?workflow= into URL once we know it (replace — no history entry).
+  useEffect(() => {
+    if (!resolvedWorkflow || workflowParam === resolvedWorkflow) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('workflow', resolvedWorkflow);
+    setSearchParams(next, { replace: true });
+  }, [resolvedWorkflow, workflowParam, searchParams, setSearchParams]);
+
+  const isTransitWorkflow = resolvedWorkflow === 'transit';
+
   const {
     draftId: parsedDraftId,
     seedRecordId: parsedSeedRecordId,
@@ -39,7 +61,7 @@ export function LabView() {
   } = useWorkflowDraftRoute({
     workflowId: 'transit_lab',
     subjectId: targetId,
-    enableDrafts: Boolean(isTransitTarget),
+    enableDrafts: isTransitWorkflow,
     userPresent: Boolean(user),
     onError: setErrorMessage,
   });
@@ -124,7 +146,7 @@ export function LabView() {
     return <div className="loading">Loading...</div>;
   }
 
-  if (isTransitTarget) {
+  if (isTransitWorkflow) {
     if (!draftRestoreReady) {
       return <div className="loading">Restoring draft...</div>;
     }
