@@ -3546,3 +3546,145 @@ body {
   font-weight: 500;
   font-size: 0.9rem;
 }
+
+/* ===== Mobile (≤ 600px) ===== */
+
+@media (max-width: 600px) {
+
+  /* ── Navbar ───────────────────────────────────── */
+
+  .navbar {
+    padding: 0 12px;
+    gap: 0;
+    height: 48px;
+  }
+
+  .navbar-subtitle {
+    display: none;
+  }
+
+  .navbar-title {
+    font-size: 15px;
+  }
+
+  .navbar-categories {
+    overflow-x: auto;
+    flex-shrink: 1;
+    gap: 0;
+    padding: 0 4px;
+  }
+
+  .navbar-category-tab {
+    font-size: 12px;
+    padding: 5px 10px;
+    white-space: nowrap;
+  }
+
+  .navbar-links {
+    flex-shrink: 0;
+    gap: 0;
+  }
+
+  .navbar-links a {
+    font-size: 12px;
+    padding: 5px 8px;
+  }
+
+  /* ── Topic bar cards ──────────────────────────── */
+
+  .topic-bar-cards {
+    padding: 10px 12px 8px;
+    gap: 8px;
+  }
+
+  .topic-bar-card {
+    width: 280px;
+    height: 120px;
+  }
+
+  .topic-bar-preview {
+    width: 150px;
+  }
+
+  .topic-bar-info {
+    padding: 12px 12px;
+    gap: 6px;
+  }
+
+  .topic-bar-name {
+    font-size: 13px;
+  }
+
+  .topic-bar-desc {
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .topic-bar-code {
+    font-size: 10px;
+  }
+
+  .topic-bar-toggle {
+    font-size: 10px;
+    padding: 5px 12px;
+  }
+
+  /* ── Target popup ─────────────────────────────── */
+
+  .target-popup {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+    padding: 14px;
+  }
+
+  /* ── Buttons (touch targets ≥ 44px) ──────────── */
+
+  .btn-primary,
+  .btn-secondary {
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .btn-sm {
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+
+  /* ── Lab view ─────────────────────────────────── */
+
+  .lab-sidebar,
+  .transit-lab .lab-sidebar {
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+
+  .transit-step-indicator {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+  }
+
+  .transit-step-label {
+    display: none;
+  }
+
+  /* ── Record / detail pages ────────────────────── */
+
+  .record-detail-page {
+    margin: 20px auto 40px;
+    padding: 0 14px;
+  }
+
+  .analysis-record-card {
+    padding: 14px;
+  }
+
+  /* ── Page placeholder ─────────────────────────── */
+
+  .page-placeholder {
+    margin: 28px auto;
+    padding: 0 16px;
+  }
+}
