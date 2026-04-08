@@ -109,7 +109,11 @@ def _ensure_analysis_record_columns(db: sqlite3.Connection) -> None:
     if not columns:
         return
     if "share_token" not in columns:
-        db.execute("ALTER TABLE analysis_records ADD COLUMN share_token TEXT UNIQUE")
+        db.execute("ALTER TABLE analysis_records ADD COLUMN share_token TEXT")
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_records_share_token "
+            "ON analysis_records (share_token) WHERE share_token IS NOT NULL"
+        )
 
 
 def _ensure_analysis_draft_columns(db: sqlite3.Connection) -> None:
