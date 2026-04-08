@@ -66,6 +66,11 @@ class RecordListResponse(BaseModel):
     records: list[RecordListItemResponse] = Field(default_factory=list)
 
 
+class ShareTokenResponse(BaseModel):
+    share_token: str
+    share_url: str
+
+
 class WorkflowDraftRequest(BaseModel):
     workflow: str
     target_id: str

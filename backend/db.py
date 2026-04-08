@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -95,8 +96,20 @@ def _ensure_schema() -> None:
         with closing(_get_connection()) as db:
             db.executescript(_SCHEMA)
             _ensure_analysis_draft_columns(db)
+            _ensure_analysis_record_columns(db)
             db.commit()
         _schema_ready = True
+
+
+def _ensure_analysis_record_columns(db: sqlite3.Connection) -> None:
+    columns = {
+        str(row["name"])
+        for row in db.execute("PRAGMA table_info(analysis_records)").fetchall()
+    }
+    if not columns:
+        return
+    if "share_token" not in columns:
+        db.execute("ALTER TABLE analysis_records ADD COLUMN share_token TEXT UNIQUE")
 
 
 def _ensure_analysis_draft_columns(db: sqlite3.Connection) -> None:
@@ -273,10 +286,46 @@ def get_analysis_record(record_id: int, user_id: int) -> dict[str, Any] | None:
         ).fetchone()
         if not row:
             return None
-        record = dict(row)
-        record["observation_ids"] = json.loads(record["observation_ids"])
-        record["payload"] = json.loads(record.pop("payload_json"))
-        return record
+        return _parse_record_row(row)
+
+
+def _parse_record_row(row: sqlite3.Row) -> dict[str, Any]:
+    record = dict(row)
+    record["observation_ids"] = json.loads(record["observation_ids"])
+    record["payload"] = json.loads(record.pop("payload_json"))
+    return record
+
+
+def create_or_get_share_token(record_id: int, user_id: int) -> str | None:
+    """Create (or return existing) share token for a record owned by user_id."""
+    with closing(get_db()) as db:
+        row = db.execute(
+            "SELECT share_token FROM analysis_records WHERE id = ? AND user_id = ?",
+            (record_id, user_id),
+        ).fetchone()
+        if not row:
+            return None
+        token = row["share_token"]
+        if not token:
+            token = secrets.token_urlsafe(16)
+            db.execute(
+                "UPDATE analysis_records SET share_token = ? WHERE id = ? AND user_id = ?",
+                (token, record_id, user_id),
+            )
+            db.commit()
+        return token
+
+
+def get_analysis_record_by_token(token: str) -> dict[str, Any] | None:
+    """Return a record by its public share token (no auth required)."""
+    with closing(get_db()) as db:
+        row = db.execute(
+            "SELECT * FROM analysis_records WHERE share_token = ?",
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+        return _parse_record_row(row)
 
 
 def upsert_analysis_draft(

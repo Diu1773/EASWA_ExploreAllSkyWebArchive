@@ -1,15 +1,17 @@
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from config import RECORD_REQUIRE_LOGIN
+from config import BASE_URL, RECORD_REQUIRE_LOGIN
 from routers.auth import get_current_user
 from schemas.record import (
     RecordListResponse,
     RecordSubmissionRequest,
     RecordSubmissionResponse,
     RecordTemplateResponse,
+    ShareTokenResponse,
 )
 from services.rate_limit_service import enforce_rate_limit
 from services import record_service
+from db import create_or_get_share_token, get_analysis_record_by_token
 
 router = APIRouter(tags=["records"])
 
@@ -76,6 +78,39 @@ def delete_my_record(record_id: int, request: Request):
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return Response(status_code=204)
+
+
+@router.post("/records/mine/{record_id}/share", response_model=ShareTokenResponse)
+def create_record_share_link(record_id: int, request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not logged in.")
+    token = create_or_get_share_token(record_id, user["id"])
+    if token is None:
+        raise HTTPException(status_code=404, detail="Record not found.")
+    return ShareTokenResponse(
+        share_token=token,
+        share_url=f"{BASE_URL}/shared/{token}",
+    )
+
+
+@router.get("/records/shared/{token}", response_model=RecordListResponse)
+def get_shared_record(token: str):
+    record = get_analysis_record_by_token(token)
+    if not record:
+        raise HTTPException(status_code=404, detail="Shared record not found or link is invalid.")
+    from schemas.record import RecordListItemResponse
+    item = RecordListItemResponse(
+        submission_id=record["id"],
+        workflow=record["workflow"],
+        template_id=record["template_id"],
+        target_id=record["target_id"],
+        observation_ids=record["observation_ids"],
+        title=record["title"],
+        created_at=record["created_at"],
+        payload=record["payload"],
+    )
+    return RecordListResponse(records=[item])
 
 
 @router.post(

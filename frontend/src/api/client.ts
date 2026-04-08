@@ -402,6 +402,28 @@ export async function downloadMyRecordPhotometryCsv(recordId: number): Promise<v
   URL.revokeObjectURL(objectUrl);
 }
 
+export async function createRecordShareLink(
+  recordId: number
+): Promise<{ share_token: string; share_url: string }> {
+  const path = `/records/mine/${recordId}/share`;
+  const res = await fetch(`${BASE}${path}`, { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(await buildApiErrorMessage(res, `POST ${path} failed`));
+  }
+  return res.json();
+}
+
+export async function fetchSharedRecord(token: string): Promise<RecordListItem | null> {
+  const path = `/records/shared/${token}`;
+  const res = await fetch(`${BASE}${path}`);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(await buildApiErrorMessage(res, `GET ${path} failed`));
+  }
+  const data = await res.json();
+  return (data.records?.[0] as RecordListItem) ?? null;
+}
+
 function extractFilename(
   contentDisposition: string | null,
   fallback: string

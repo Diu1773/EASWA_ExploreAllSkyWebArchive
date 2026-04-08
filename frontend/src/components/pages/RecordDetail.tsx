@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
+  createRecordShareLink,
   downloadMyRecordPhotometryCsv,
   fetchMyRecordSubmission,
   fetchRecordTemplate,
@@ -80,6 +81,8 @@ export function RecordDetail() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -154,6 +157,21 @@ export function RecordDetail() {
     }
   };
 
+  const handleShare = async () => {
+    if (!record) return;
+    setSharing(true);
+    try {
+      const { share_url } = await createRecordShareLink(record.submission_id);
+      await navigator.clipboard.writeText(share_url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 3000);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to create share link.');
+    } finally {
+      setSharing(false);
+    }
+  };
+
   if (!user) {
     return (
       <div className="page-placeholder">
@@ -209,11 +227,17 @@ export function RecordDetail() {
               type="button"
               className="btn-sm"
               disabled={downloading}
-              onClick={() => {
-                void handleDownloadCsv();
-              }}
+              onClick={() => { void handleDownloadCsv(); }}
             >
               {downloading ? 'Downloading...' : 'Download CSV'}
+            </button>
+            <button
+              type="button"
+              className={`btn-sm ${copiedLink ? 'btn-sm--success' : ''}`}
+              disabled={sharing}
+              onClick={() => { void handleShare(); }}
+            >
+              {sharing ? 'Generating...' : copiedLink ? 'Link Copied!' : 'Share'}
             </button>
           </div>
         )}

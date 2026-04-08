@@ -5,6 +5,7 @@ import { TargetDetail } from './components/detail/TargetDetail';
 import { LabView } from './components/lab/LabView';
 import { MyAnalyses } from './components/pages/MyAnalyses';
 import { RecordDetail } from './components/pages/RecordDetail';
+import { SharedRecord } from './components/pages/SharedRecord';
 import { Settings } from './components/pages/Settings';
 
 export const router = createBrowserRouter([
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
       { path: '/lab/:targetId', element: <LabView /> },
       { path: '/my', element: <MyAnalyses /> },
       { path: '/records/:recordId', element: <RecordDetail /> },
+      { path: '/shared/:token', element: <SharedRecord /> },
       { path: '/settings', element: <Settings /> },
     ],
   },

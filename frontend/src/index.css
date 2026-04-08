@@ -3688,3 +3688,39 @@ body {
     padding: 0 16px;
   }
 }
+
+/* ── Share button success state ──────────────────── */
+
+.btn-sm--success {
+  border-color: var(--success) !important;
+  color: var(--success) !important;
+}
+
+/* ── Shared record badge ─────────────────────────── */
+
+.shared-badge {
+  background: rgba(232, 114, 42, 0.15);
+  border: 1px solid rgba(232, 114, 42, 0.3);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 10px;
+}
+
+/* ── TransitLab record saved block ──────────────── */
+
+.transit-record-saved {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.transit-record-saved-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.transit-record-saved-actions {
+  display: flex;
+  gap: 8px;
+}

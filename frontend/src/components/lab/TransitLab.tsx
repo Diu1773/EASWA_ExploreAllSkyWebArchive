@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
+  downloadMyRecordPhotometryCsv,
   fetchMyRecordSubmission,
   fetchRecordTemplate,
   submitRecordTemplate,
@@ -3261,14 +3262,23 @@ export function TransitLab({
                 </div>
 
                 {submittedRecord && (
-                  <div className="transit-run-done">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green, #4ade80)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                      <polyline points="22 4 12 14.01 9 11.01" />
-                    </svg>
-                    <span>
-                      Saved as record #{submittedRecord.submission_id} to {submittedRecord.export_path}.
-                    </span>
+                  <div className="transit-run-done transit-record-saved">
+                    <div className="transit-record-saved-msg">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green, #4ade80)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                        <polyline points="22 4 12 14.01 9 11.01" />
+                      </svg>
+                      <span>Record #{submittedRecord.submission_id} saved.</span>
+                    </div>
+                    <div className="transit-record-saved-actions">
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        onClick={() => { void downloadMyRecordPhotometryCsv(submittedRecord.submission_id); }}
+                      >
+                        Download CSV
+                      </button>
+                    </div>
                   </div>
                 )}
 
