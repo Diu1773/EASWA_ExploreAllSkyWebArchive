@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 
 import numpy as np
 
@@ -370,3 +371,57 @@ def test_disk_cutout_cache_path_disabled_returns_none(monkeypatch):
     )
 
     assert path is None
+
+
+def test_urlopen_with_retries_retries_transient_http_errors(monkeypatch):
+    attempts: list[int] = []
+    sleep_calls: list[float] = []
+    response = object()
+
+    def fake_urlopen(request, timeout=0):
+        attempts.append(int(timeout))
+        if len(attempts) < 3:
+            raise HTTPError(
+                url="https://mast.stsci.edu/tesscut/api/v0.1/astrocut",
+                code=502,
+                msg="Bad Gateway",
+                hdrs=None,
+                fp=None,
+            )
+        return response
+
+    monkeypatch.setattr(transit_service, "urlopen", fake_urlopen)
+    monkeypatch.setattr(transit_service.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    result = transit_service._urlopen_with_retries("request", timeout=12, attempts=3)
+
+    assert result is response
+    assert len(attempts) == 3
+    assert len(sleep_calls) == 2
+    assert sleep_calls[0] < sleep_calls[1]
+
+
+def test_urlopen_with_retries_does_not_retry_non_retryable_http_errors(monkeypatch):
+    attempts: list[int] = []
+
+    def fake_urlopen(request, timeout=0):
+        attempts.append(int(timeout))
+        raise HTTPError(
+            url="https://mast.stsci.edu/tesscut/api/v0.1/astrocut",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(transit_service, "urlopen", fake_urlopen)
+    monkeypatch.setattr(transit_service.time, "sleep", lambda seconds: (_ for _ in ()).throw(AssertionError("sleep should not run")))
+
+    try:
+        transit_service._urlopen_with_retries("request", timeout=12, attempts=3)
+    except HTTPError as error:
+        assert error.code == 404
+    else:
+        raise AssertionError("Expected the original HTTPError to be raised")
+
+    assert len(attempts) == 1

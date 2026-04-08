@@ -69,6 +69,7 @@ export function useTransitPhotometry({
   dispatch,
 }: UseTransitPhotometryParams): UseTransitPhotometryResult {
   const runAbortRef = useRef<AbortController | null>(null);
+  const lastProgressAtRef = useRef(0);
 
   const abortRun = useCallback(() => {
     runAbortRef.current?.abort();
@@ -135,10 +136,15 @@ export function useTransitPhotometry({
           ),
         },
         (event) => {
-          patch({
-            runProgressEvent: event,
-            progress: Math.max(0, Math.min(100, Math.round((event.pct ?? 0) * 100))),
-          });
+          const now = Date.now();
+          const isDone = (event.pct ?? 0) >= 1;
+          if (isDone || now - lastProgressAtRef.current >= 100) {
+            lastProgressAtRef.current = now;
+            patch({
+              runProgressEvent: event,
+              progress: Math.max(0, Math.min(100, Math.round((event.pct ?? 0) * 100))),
+            });
+          }
         },
         controller.signal
       );

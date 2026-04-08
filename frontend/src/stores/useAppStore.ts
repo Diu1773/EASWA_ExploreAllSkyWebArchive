@@ -10,6 +10,12 @@ export const DEFAULT_TRANSIT_FILTERS: TransitTargetFilters = {
 };
 
 interface AppState {
+  activeCategory: string;
+  setActiveCategory: (id: string) => void;
+
+  sidebarCollapsed: boolean;
+  toggleSidebar: () => void;
+
   selectedTopic: string | null;
   setTopic: (topic: string | null) => void;
 
@@ -35,6 +41,12 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
+      activeCategory: 'change',
+      setActiveCategory: (id) => set({ activeCategory: id }),
+
+      sidebarCollapsed: false,
+      toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+
       selectedTopic: null,
       setTopic: (topic) => set({ selectedTopic: topic }),
 

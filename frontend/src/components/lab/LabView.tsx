@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { fetchTarget, fetchObservations, runPhotometry, buildLightCurve } from '../../api/client';
+import { runPhotometry, buildLightCurve } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
+import { useLabData } from '../../hooks/useLabData';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useWorkflowDraftRoute } from '../../hooks/useWorkflowDraftRoute';
 import { ThumbnailStrip } from './ThumbnailStrip';
@@ -9,7 +10,7 @@ import { ParamsPanel } from './ParamsPanel';
 import { PhotometryResult } from './PhotometryResult';
 import { LightCurvePlot } from './LightCurvePlot';
 import { TransitLab } from './TransitLab';
-import type { Target, Observation } from '../../types/target';
+import type { Target } from '../../types/target';
 import type {
   PhotometryMeasurement,
   LightCurveResponse,
@@ -24,8 +25,7 @@ const TOPIC_WORKFLOW: Record<string, string> = {
 export function LabView() {
   const { targetId } = useParams<{ targetId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [target, setTarget] = useState<Target | null>(null);
-  const [observations, setObservations] = useState<Observation[]>([]);
+  const { target, observations, error: loadError } = useLabData(targetId);
   const [measurements, setMeasurements] = useState<PhotometryMeasurement[]>([]);
   const [lightCurve, setLightCurve] = useState<LightCurveResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -67,18 +67,8 @@ export function LabView() {
   });
 
   useEffect(() => {
-    if (!targetId) return;
-
-    Promise.all([fetchTarget(targetId), fetchObservations(targetId)]).then(
-      ([detail, obs]) => {
-        setTarget(detail.target);
-        setObservations(obs);
-      }
-    ).catch((error) => {
-      console.error('Failed to load lab data', error);
-      setErrorMessage('Failed to load target data.');
-    });
-  }, [targetId]);
+    if (loadError) setErrorMessage(loadError);
+  }, [loadError]);
 
   const handleRunPhotometry = async () => {
     if (!targetId || selectedIds.length === 0) return;

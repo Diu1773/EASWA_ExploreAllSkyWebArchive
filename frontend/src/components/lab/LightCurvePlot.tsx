@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import PlotlyModule from 'plotly.js-dist-min';
 import type { LightCurveResponse } from '../../types/photometry';
 
@@ -15,6 +15,8 @@ type ResidualCurve = {
   y: number[];
   error?: number[];
 };
+
+const plotly = (PlotlyModule as any).default ?? (PlotlyModule as any);
 
 const EASWA_PLOT_LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(
   `<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -95,22 +97,22 @@ export function LightCurvePlot({
   enableRangeSelection = false,
   onSelectRange = null,
 }: LightCurvePlotProps) {
-  const plotly = (PlotlyModule as any).default ?? (PlotlyModule as any);
   const plotRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<string | null>(null);
   const shouldFold = Boolean(foldPeriod && foldPeriod > 0);
-  const plotData = shouldFold
-    ? {
-        ...data,
-        x_label: 'Phase',
-        points: [...data.points]
-          .map((point) => ({
-            ...point,
-            phase: (((point.hjd - (foldT0 ?? 0)) / foldPeriod!) % 1 + 1.5) % 1 - 0.5,
-          }))
-          .sort((a, b) => (a.phase ?? 0) - (b.phase ?? 0)),
-      }
-    : data;
+  const plotData = useMemo(() => {
+    if (!shouldFold) return data;
+    return {
+      ...data,
+      x_label: 'Phase',
+      points: [...data.points]
+        .map((point) => ({
+          ...point,
+          phase: (((point.hjd - (foldT0 ?? 0)) / foldPeriod!) % 1 + 1.5) % 1 - 0.5,
+        }))
+        .sort((a, b) => (a.phase ?? 0) - (b.phase ?? 0)),
+    };
+  }, [data, shouldFold, foldPeriod, foldT0]);
 
   useEffect(() => {
     if (plotData.points.length === 0 || !plotRef.current) return;

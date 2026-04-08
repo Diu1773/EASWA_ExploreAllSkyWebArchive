@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { fitTransitModelStreaming } from '../../../api/client';
 import type { Observation, Target } from '../../../types/target';
 import type { TransitPhotometryResponse } from '../../../types/transit';
@@ -9,6 +9,7 @@ import type { TransitLabState } from '../state';
 
 interface LightCurvePoint {
   hjd: number;
+  phase: number | null;
   magnitude: number;
   mag_error: number;
 }
@@ -47,7 +48,7 @@ export function useTransitFit({
   foldT0Auto: _foldT0Auto,
   fitDataSource,
   fitLimbDarkening,
-  fitWindowPhase,
+  fitWindowPhase: _fitWindowPhase,
   fitBaselineOrder,
   fitSigmaClipSigma,
   fitSigmaClipIterations,
@@ -91,6 +92,8 @@ export function useTransitFit({
     if (!defaultWindow) return;
     patch({ bjdWindowStart: defaultWindow.start, bjdWindowEnd: defaultWindow.end });
   }, [result, foldPeriod, target.period_days, bjdWindowStart, bjdWindowEnd]);
+
+  const lastFitProgressAtRef = useRef(0);
 
   const handleFitTransit = async () => {
     if (!result) return;
@@ -178,13 +181,18 @@ export function useTransitFit({
           points: roiPoints,
         },
         (event) => {
-          patch({ fitProgress: event });
-          dispatch({
-            type: 'append-fit-debug-log',
-            lines: [
-              `${event.stage} pct=${((event.pct ?? 0) * 100).toFixed(0)}${event.step && event.total ? ` step=${event.step}/${event.total}` : ''}`,
-            ],
-          });
+          const now = Date.now();
+          const isDone = (event.pct ?? 0) >= 1;
+          if (isDone || now - lastFitProgressAtRef.current >= 100) {
+            lastFitProgressAtRef.current = now;
+            patch({ fitProgress: event });
+            dispatch({
+              type: 'append-fit-debug-log',
+              lines: [
+                `${event.stage} pct=${((event.pct ?? 0) * 100).toFixed(0)}${event.step && event.total ? ` step=${event.step}/${event.total}` : ''}`,
+              ],
+            });
+          }
         }
       );
       const normalizedResponse = normalizeTransitFitResponse(response);

@@ -13,7 +13,6 @@ import type {
   StarOverlay,
   TransitApertureConfig,
   TransitComparisonDiagnostic,
-  TransitPhotometryResponse,
 } from '../../types/transit';
 import type { RecordTemplate } from '../../types/record';
 import { defaultTransitRecordTemplate } from '../../data/transitRecordTemplate';
@@ -36,6 +35,7 @@ import {
   buildFitResidualCurve,
   buildLightCurveFromFitResult,
   buildPhaseFoldedLightCurve,
+  computeDefaultBjdWindow,
   estimatePhaseFoldReferenceT0,
 } from '../../workflows/transit/lightCurve';
 import { useTransitPreview } from '../../workflows/transit/hooks/useTransitPreview';

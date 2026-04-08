@@ -2,59 +2,28 @@ import { useEffect, useRef, useState } from 'react';
 import { AladinViewer, type AladinViewerHandle } from './AladinViewer';
 import { TopicSidebar } from './TopicSidebar';
 import { TargetPopup } from './TargetPopup';
-import { fetchTargets } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
+import { useSkyTargets } from '../../hooks/useSkyTargets';
 import type { Target } from '../../types/target';
 
 export function SkyExplorer() {
-  const [targets, setTargets] = useState<Target[]>([]);
+  const { targets, selectedTopic } = useSkyTargets();
   const [popupTarget, setPopupTarget] = useState<Target | null>(null);
   const [gotoMessage, setGotoMessage] = useState<string | null>(null);
   const [gotoMessageTone, setGotoMessageTone] = useState<'info' | 'error' | null>(null);
   const [gotoInProgress, setGotoInProgress] = useState(false);
   const [gotoReadyTargetId, setGotoReadyTargetId] = useState<string | null>(null);
-  const selectedTopic = useAppStore((s) => s.selectedTopic);
-  const transitFilters = useAppStore((s) => s.transitFilters);
   const setCurrentTarget = useAppStore((s) => s.setCurrentTarget);
   const viewerRef = useRef<AladinViewerHandle>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
     setPopupTarget(null);
     setGotoMessage(null);
     setGotoMessageTone(null);
     setGotoInProgress(false);
     setGotoReadyTargetId(null);
     setCurrentTarget(null);
-
-    if (!selectedTopic) {
-      setTargets([]);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    fetchTargets(
-      selectedTopic ?? undefined,
-      selectedTopic === 'exoplanet_transit' ? transitFilters : undefined
-    )
-      .then((nextTargets) => {
-        if (!cancelled) {
-          setTargets(nextTargets);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error('Failed to load targets', error);
-          setTargets([]);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTopic, transitFilters]);
+  }, [selectedTopic]);
 
   const handleTargetClick = (target: Target) => {
     setPopupTarget(target);
@@ -96,7 +65,7 @@ export function SkyExplorer() {
   return (
     <div className="sky-explorer">
       <TopicSidebar />
-      <div className="sky-map-area">
+      <div className="sky-map-area" style={{ flex: 1, position: 'relative' }}>
         <AladinViewer
           ref={viewerRef}
           targets={targets}

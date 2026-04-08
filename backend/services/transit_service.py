@@ -17,6 +17,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock, Thread
 from typing import Any, Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -68,6 +69,9 @@ _CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_ITEMS
 _CUTOUT_CACHE_MAX_BYTES = TRANSIT_CUTOUT_MEMORY_CACHE_MAX_BYTES
 _HOT_CUTOUT_CACHE_MAX_ITEMS = TRANSIT_CUTOUT_HOT_CACHE_MAX_ITEMS
 _HOT_CUTOUT_CACHE_TTL_SECONDS = 20 * 60
+_REMOTE_RETRY_ATTEMPTS = 3
+_REMOTE_RETRY_BASE_DELAY_SECONDS = 0.8
+_RETRYABLE_REMOTE_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 _TRANSIT_STORAGE_ROOT = Path(__file__).resolve().parent.parent / ".cache" / "transit"
 _TRANSIT_STAGE_DIR = (
     Path(TRANSIT_CUTOUT_STAGE_DIR)
@@ -80,6 +84,7 @@ _DISK_CUTOUT_CACHE_DIR = (
     else _TRANSIT_STORAGE_ROOT / "cutouts"
 )
 _TRANSIT_STAGE_FILE_TTL_SECONDS = 6 * 60 * 60
+_DISK_CUTOUT_CACHE_TTL_SECONDS = 24 * 60 * 60  # 1일
 _TIC_EDGE_MARGIN_PX = 6.0
 _TIC_MIN_LOCAL_COVERAGE = 0.85
 _TIC_MIN_SIGNAL_SIGMA = 3.0
@@ -153,6 +158,73 @@ def _is_disk_cutout_cache_enabled() -> bool:
 
 def _ensure_transit_stage_dir() -> None:
     _TRANSIT_STAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _prune_disk_cutout_cache() -> None:
+    if not _is_disk_cutout_cache_enabled() or not _DISK_CUTOUT_CACHE_DIR.exists():
+        return
+    now = time.time()
+    for path in _DISK_CUTOUT_CACHE_DIR.iterdir():
+        if not path.is_file() or path.suffix.lower() != ".fits":
+            continue
+        try:
+            if now - path.stat().st_mtime > _DISK_CUTOUT_CACHE_TTL_SECONDS:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def _describe_remote_error(error: Exception) -> str:
+    if isinstance(error, HTTPError):
+        return f"HTTP {error.code} {error.reason}"
+    if isinstance(error, URLError):
+        reason = getattr(error, "reason", None)
+        return f"network error: {reason}" if reason else str(error)
+    message = str(error).strip()
+    return message or error.__class__.__name__
+
+
+def _is_retryable_remote_error(error: Exception) -> bool:
+    if isinstance(error, HTTPError):
+        return error.code in _RETRYABLE_REMOTE_HTTP_STATUS_CODES
+    if isinstance(error, URLError):
+        return True
+    return isinstance(error, (ConnectionError, OSError, TimeoutError))
+
+
+def _urlopen_with_retries(
+    request: Any,
+    *,
+    timeout: float,
+    progress_callback: Callable[[float, str], None] | None = None,
+    retry_progress: float | None = None,
+    retry_label: str = "TESSCut request",
+    attempts: int = _REMOTE_RETRY_ATTEMPTS,
+):
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return urlopen(request, timeout=timeout)
+        except Exception as error:
+            if not _is_retryable_remote_error(error):
+                raise
+            last_error = error
+            if attempt >= attempts:
+                break
+            if retry_progress is not None:
+                _notify_progress(
+                    progress_callback,
+                    retry_progress,
+                    (
+                        f"{retry_label} hit a temporary upstream error "
+                        f"({_describe_remote_error(error)}). "
+                        f"Retrying {attempt + 1}/{attempts}..."
+                    ),
+                )
+            time.sleep(_REMOTE_RETRY_BASE_DELAY_SECONDS * attempt)
+
+    detail = _describe_remote_error(last_error or RuntimeError("unknown upstream error"))
+    raise RuntimeError(f"{retry_label} failed after {attempts} attempts ({detail}).") from last_error
 
 
 def _prune_transit_stage_dir() -> None:
@@ -1043,40 +1115,78 @@ def _load_cutout_dataset(
         method="POST",
     )
 
-    temp_zip_path: Path | None = None
-    try:
-        _ensure_transit_stage_dir()
-        _prune_transit_stage_dir()
-        with tempfile.NamedTemporaryFile(
-            dir=_TRANSIT_STAGE_DIR,
-            suffix=".zip",
-            delete=False,
-        ) as temp_zip_file:
-            temp_zip_path = Path(temp_zip_file.name)
-            with urlopen(request, timeout=120) as response:
-                content_length = response.headers.get("Content-Length")
-                total_bytes = (
-                    int(content_length) if content_length and content_length.isdigit() else 0
-                )
-                bytes_read = 0
+    use_disk = _is_disk_cutout_cache_enabled()
 
-                while True:
-                    chunk = response.read(1024 * 256)
-                    if not chunk:
-                        break
-                    temp_zip_file.write(chunk)
-                    bytes_read += len(chunk)
-                    if total_bytes > 0:
-                        fraction = bytes_read / total_bytes
-                        _notify_progress(
-                            progress_callback,
-                            0.08 + 0.7 * fraction,
-                            f"Downloading TESS cutout ZIP ({fraction * 100:.0f}%).",
-                        )
+    if use_disk:
+        # Disk-cache path: write ZIP to temp file so we can also persist the FITS.
+        temp_zip_path: Path | None = None
+        try:
+            _ensure_transit_stage_dir()
+            _prune_transit_stage_dir()
+            with tempfile.NamedTemporaryFile(
+                dir=_TRANSIT_STAGE_DIR,
+                suffix=".zip",
+                delete=False,
+            ) as temp_zip_file:
+                temp_zip_path = Path(temp_zip_file.name)
+                with _urlopen_with_retries(
+                    request,
+                    timeout=120,
+                    progress_callback=progress_callback,
+                    retry_progress=0.05,
+                    retry_label="TESSCut ZIP download",
+                ) as response:
+                    content_length = response.headers.get("Content-Length")
+                    total_bytes = (
+                        int(content_length) if content_length and content_length.isdigit() else 0
+                    )
+                    bytes_read = 0
+                    while True:
+                        chunk = response.read(1024 * 256)
+                        if not chunk:
+                            break
+                        temp_zip_file.write(chunk)
+                        bytes_read += len(chunk)
+                        if total_bytes > 0:
+                            fraction = bytes_read / total_bytes
+                            _notify_progress(
+                                progress_callback,
+                                0.08 + 0.7 * fraction,
+                                f"Downloading TESS cutout ZIP ({fraction * 100:.0f}%).",
+                            )
 
+            _notify_progress(progress_callback, 0.82, "Extracting FITS data from cutout ZIP.")
+            _extract_disk_cutout_cache(temp_zip_path, cached_fits_path)
+            fits_source: "Path | io.BytesIO" = (
+                cached_fits_path if cached_fits_path is not None
+                else _extract_temp_fits_from_zip(temp_zip_path)
+            )
+            dataset = _dataset_from_fits_path(
+                target_id=target_id,
+                observation_id=observation_id,
+                sector=sector,
+                camera=camera,
+                ccd=ccd,
+                size_px=size_px,
+                cutout_url=cutout_url,
+                ra=ra,
+                dec=dec,
+                fits_path=fits_source,
+                progress_callback=progress_callback,
+            )
+            _store_cutout_dataset(cache_key, dataset)
+            return dataset
+        finally:
+            if temp_zip_path is not None:
+                temp_zip_path.unlink(missing_ok=True)
+            if not use_disk and isinstance(fits_source, Path):
+                fits_source.unlink(missing_ok=True)
+    else:
+        # Memory-only path: no disk I/O beyond the network download.
+        zip_buf = _download_cutout_to_memory(request, progress_callback)
         _notify_progress(progress_callback, 0.82, "Extracting FITS data from cutout ZIP.")
-        _extract_disk_cutout_cache(temp_zip_path, cached_fits_path)
-        fits_path = cached_fits_path if cached_fits_path is not None else _extract_temp_fits_from_zip(temp_zip_path)
+        fits_buf = _extract_fits_bytes_from_zip_bytes(zip_buf)
+        zip_buf.close()
         dataset = _dataset_from_fits_path(
             target_id=target_id,
             observation_id=observation_id,
@@ -1087,20 +1197,11 @@ def _load_cutout_dataset(
             cutout_url=cutout_url,
             ra=ra,
             dec=dec,
-            fits_path=fits_path,
+            fits_path=fits_buf,
             progress_callback=progress_callback,
         )
         _store_cutout_dataset(cache_key, dataset)
         return dataset
-    finally:
-        if temp_zip_path is not None:
-            temp_zip_path.unlink(missing_ok=True)
-        if not _is_disk_cutout_cache_enabled():
-            try:
-                if 'fits_path' in locals():
-                    Path(fits_path).unlink(missing_ok=True)
-            except OSError:
-                pass
 
 
 def _dataset_from_fits_path(
@@ -1114,7 +1215,7 @@ def _dataset_from_fits_path(
     cutout_url: str,
     ra: float,
     dec: float,
-    fits_path: Path,
+    fits_path: "Path | io.BytesIO",
     progress_callback: Callable[[float, str], None] | None = None,
 ) -> CutoutDataset:
     _notify_progress(progress_callback, 0.87, "Reading cadence cube from FITS file.")
@@ -1185,11 +1286,83 @@ def _extract_temp_fits_from_zip(zip_path: Path) -> Path:
     return temp_path
 
 
+def _extract_fits_bytes_from_zip_bytes(zip_bytes: io.BytesIO) -> io.BytesIO:
+    """Extract the FITS file from an in-memory ZIP without any disk I/O."""
+    with zipfile.ZipFile(zip_bytes) as archive_file:
+        fits_name = next(
+            name for name in archive_file.namelist() if name.lower().endswith(".fits")
+        )
+        with archive_file.open(fits_name) as source:
+            fits_buf = io.BytesIO(source.read())
+    fits_buf.seek(0)
+    return fits_buf
+
+
+_DOWNLOAD_STALL_BYTES = 50 * 1024       # 50 KB minimum per stall window
+_DOWNLOAD_STALL_SECONDS = 30            # stall window duration
+
+
+def _download_cutout_to_memory(
+    request: Request,
+    progress_callback: Callable[[float, str], None] | None,
+) -> io.BytesIO:
+    """Download a TESSCut ZIP directly into a BytesIO buffer (no disk write).
+
+    Raises RuntimeError if throughput drops below 50 KB / 30 s (stall detection).
+    """
+    buf = io.BytesIO()
+    with _urlopen_with_retries(
+        request,
+        timeout=120,
+        progress_callback=progress_callback,
+        retry_progress=0.05,
+        retry_label="TESSCut ZIP download",
+    ) as response:
+        content_length = response.headers.get("Content-Length")
+        total_bytes = (
+            int(content_length) if content_length and content_length.isdigit() else 0
+        )
+        bytes_read = 0
+        stall_window_start = time.monotonic()
+        stall_window_bytes = 0
+
+        while True:
+            chunk = response.read(1024 * 256)
+            if not chunk:
+                break
+            buf.write(chunk)
+            bytes_read += len(chunk)
+            stall_window_bytes += len(chunk)
+
+            now = time.monotonic()
+            elapsed_in_window = now - stall_window_start
+            if elapsed_in_window >= _DOWNLOAD_STALL_SECONDS:
+                if stall_window_bytes < _DOWNLOAD_STALL_BYTES:
+                    raise RuntimeError(
+                        f"TESS cutout download stalled: only {stall_window_bytes / 1024:.0f} KB"
+                        f" received in {elapsed_in_window:.0f}s. MAST may be overloaded."
+                        " Try a different sector or retry later."
+                    )
+                stall_window_start = now
+                stall_window_bytes = 0
+
+            if total_bytes > 0:
+                fraction = bytes_read / total_bytes
+                _notify_progress(
+                    progress_callback,
+                    0.08 + 0.7 * fraction,
+                    f"Downloading TESS cutout ZIP ({fraction * 100:.0f}%).",
+                )
+    buf.seek(0)
+    return buf
+
+
 def _extract_disk_cutout_cache(zip_path: Path, cache_path: Path | None) -> None:
     if cache_path is None or not _is_disk_cutout_cache_enabled():
         return
     try:
         _DISK_CUTOUT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _prune_disk_cutout_cache()
         if cache_path.exists():
             return
 
