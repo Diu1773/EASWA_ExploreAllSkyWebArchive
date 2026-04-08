@@ -10,7 +10,6 @@ import { ParamsPanel } from './ParamsPanel';
 import { PhotometryResult } from './PhotometryResult';
 import { LightCurvePlot } from './LightCurvePlot';
 import { TransitLab } from './TransitLab';
-import type { Target } from '../../types/target';
 import type {
   PhotometryMeasurement,
   LightCurveResponse,

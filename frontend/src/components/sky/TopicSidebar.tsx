@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchTopics } from '../../api/client';
 import { DEFAULT_TRANSIT_FILTERS, useAppStore } from '../../stores/useAppStore';
 import type { Topic, TransitTargetFilters } from '../../types/target';
@@ -21,7 +22,9 @@ function GearIcon() {
 export function TopicSidebar() {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number } | null>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const gearButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const selectedTopic = useAppStore((s) => s.selectedTopic);
@@ -38,11 +41,23 @@ export function TopicSidebar() {
     setDraftFilters(transitFilters);
   }, [transitFilters]);
 
-  // Close settings when clicking outside
+  // Calculate panel position from gear button rect when opening
+  useEffect(() => {
+    if (settingsOpen && gearButtonRef.current) {
+      const rect = gearButtonRef.current.getBoundingClientRect();
+      setPanelPos({ top: rect.bottom + 8, left: rect.left - 150 });
+    }
+  }, [settingsOpen]);
+
+  // Close settings when clicking outside (exclude gear button to avoid open/close race)
   useEffect(() => {
     if (!settingsOpen) return;
     const handle = (e: MouseEvent) => {
-      if (settingsPanelRef.current && !settingsPanelRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        settingsPanelRef.current && !settingsPanelRef.current.contains(target) &&
+        gearButtonRef.current && !gearButtonRef.current.contains(target)
+      ) {
         setSettingsOpen(false);
       }
     };
@@ -78,6 +93,7 @@ export function TopicSidebar() {
                     </div>
                     {t.id === 'exoplanet_transit' && (
                       <button
+                        ref={gearButtonRef}
                         className={`topic-bar-gear ${settingsOpen ? 'open' : ''}`}
                         type="button"
                         title="필터 설정"
@@ -92,38 +108,10 @@ export function TopicSidebar() {
                     <span className="topic-bar-desc">{t.description}</span>
                   </div>
                 </button>
+
               </div>
             ))}
           </div>
-
-          {settingsOpen && (
-            <div className="topic-bar-settings-panel" ref={settingsPanelRef}>
-              <label className="topic-settings-field">
-                <span>Max Targets</span>
-                <input type="number" min={1} max={100} value={draftFilters.maxTargets}
-                  onChange={(e) => updateDraft({ maxTargets: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })} />
-              </label>
-              <label className="topic-settings-field">
-                <span>Min Depth (%)</span>
-                <input type="number" min={0.1} max={10} step={0.1} value={draftFilters.minDepthPct}
-                  onChange={(e) => updateDraft({ minDepthPct: Math.max(0.1, Math.min(10, Number(e.target.value) || 0.1)) })} />
-              </label>
-              <label className="topic-settings-field">
-                <span>Max Period (d)</span>
-                <input type="number" min={0.2} max={30} step={0.1} value={draftFilters.maxPeriodDays}
-                  onChange={(e) => updateDraft({ maxPeriodDays: Math.max(0.2, Math.min(30, Number(e.target.value) || 0.2)) })} />
-              </label>
-              <label className="topic-settings-field">
-                <span>Max Host V</span>
-                <input type="number" min={6} max={16} step={0.1} value={draftFilters.maxHostVmag}
-                  onChange={(e) => updateDraft({ maxHostVmag: Math.max(6, Math.min(16, Number(e.target.value) || 6)) })} />
-              </label>
-              <div className="topic-settings-actions">
-                <button className="btn-sm" onClick={() => setDraftFilters(DEFAULT_TRANSIT_FILTERS)}>Reset</button>
-                <button className="btn-sm" onClick={() => { setTransitFilters(draftFilters); setTopic('exoplanet_transit'); setSettingsOpen(false); }}>Apply</button>
-              </div>
-            </div>
-          )}
         </>
       )}
 
@@ -135,6 +123,40 @@ export function TopicSidebar() {
       >
         {sidebarCollapsed ? '▼  탐구 활동 열기' : '▲'}
       </button>
+
+      {settingsOpen && panelPos && createPortal(
+        <div
+          className="topic-bar-settings-panel"
+          ref={settingsPanelRef}
+          style={{ top: panelPos.top, left: panelPos.left }}
+        >
+          <label className="topic-settings-field">
+            <span>Max Targets</span>
+            <input type="number" min={1} max={100} value={draftFilters.maxTargets}
+              onChange={(e) => updateDraft({ maxTargets: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })} />
+          </label>
+          <label className="topic-settings-field">
+            <span>Min Depth (%)</span>
+            <input type="number" min={0.1} max={10} step={0.1} value={draftFilters.minDepthPct}
+              onChange={(e) => updateDraft({ minDepthPct: Math.max(0.1, Math.min(10, Number(e.target.value) || 0.1)) })} />
+          </label>
+          <label className="topic-settings-field">
+            <span>Max Period (d)</span>
+            <input type="number" min={0.2} max={30} step={0.1} value={draftFilters.maxPeriodDays}
+              onChange={(e) => updateDraft({ maxPeriodDays: Math.max(0.2, Math.min(30, Number(e.target.value) || 0.2)) })} />
+          </label>
+          <label className="topic-settings-field">
+            <span>Max Host V</span>
+            <input type="number" min={6} max={16} step={0.1} value={draftFilters.maxHostVmag}
+              onChange={(e) => updateDraft({ maxHostVmag: Math.max(6, Math.min(16, Number(e.target.value) || 6)) })} />
+          </label>
+          <div className="topic-settings-actions">
+            <button className="btn-sm" onClick={() => setDraftFilters(DEFAULT_TRANSIT_FILTERS)}>Reset</button>
+            <button className="btn-sm" onClick={() => { setTransitFilters(draftFilters); setTopic('exoplanet_transit'); setSettingsOpen(false); }}>Apply</button>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
