@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from config import BASE_URL, RECORD_REQUIRE_LOGIN
 from routers.auth import get_current_user
 from schemas.record import (
+    RecordListItemResponse,
     RecordListResponse,
     RecordSubmissionRequest,
     RecordSubmissionResponse,
@@ -99,7 +100,6 @@ def get_shared_record(token: str):
     record = get_analysis_record_by_token(token)
     if not record:
         raise HTTPException(status_code=404, detail="Shared record not found or link is invalid.")
-    from schemas.record import RecordListItemResponse
     item = RecordListItemResponse(
         submission_id=record["id"],
         workflow=record["workflow"],

@@ -7,6 +7,7 @@ import {
   fetchRecordTemplate,
 } from '../../api/client';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { formatAnswerValue, formatMetric } from '../../utils/recordFormat';
 import type { RecordListItem, RecordTemplate } from '../../types/record';
 
 type RecordPayload = {
@@ -42,35 +43,6 @@ type RecordPayload = {
   answers?: Record<string, unknown>;
 };
 
-function formatAnswerValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item)).join(', ');
-  }
-  if (typeof value === 'boolean') {
-    return value ? 'Yes' : 'No';
-  }
-  if (typeof value === 'number') {
-    return Number.isInteger(value) ? String(value) : value.toFixed(3);
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (value === null || value === undefined) {
-    return 'Not provided';
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function formatMetric(value: number | undefined, digits = 4): string {
-  if (value === undefined || !Number.isFinite(value)) {
-    return '—';
-  }
-  return value.toFixed(digits);
-}
 
 export function RecordDetail() {
   const user = useAuthStore((s) => s.user);
@@ -162,7 +134,18 @@ export function RecordDetail() {
     setSharing(true);
     try {
       const { share_url } = await createRecordShareLink(record.submission_id);
-      await navigator.clipboard.writeText(share_url);
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(share_url);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = share_url;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 3000);
     } catch (error) {

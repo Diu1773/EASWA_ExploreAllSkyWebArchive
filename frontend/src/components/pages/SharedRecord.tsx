@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { fetchRecordTemplate, fetchSharedRecord } from '../../api/client';
+import { formatAnswerValue, formatMetric } from '../../utils/recordFormat';
 import type { RecordListItem, RecordTemplate } from '../../types/record';
 
 type RecordPayload = {
@@ -18,17 +19,6 @@ type RecordPayload = {
   answers?: Record<string, unknown>;
 };
 
-function formatAnswerValue(value: unknown): string {
-  if (Array.isArray(value)) return value.map(String).join(', ');
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (value === null || value === undefined) return '—';
-  try { return JSON.stringify(value); } catch { return String(value); }
-}
-
-function formatMetric(value: number | undefined, digits = 4): string {
-  if (value === undefined || !Number.isFinite(value)) return '—';
-  return value.toFixed(digits);
-}
 
 export function SharedRecord() {
   const { token } = useParams<{ token: string }>();
