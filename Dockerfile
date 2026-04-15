@@ -21,6 +21,7 @@ COPY backend/requirements.txt /app/backend/requirements.txt
 # Install numpy first so its headers are available when batman-package
 # compiles its C extension. Then install the rest of the requirements.
 RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir setuptools \
     && pip install --no-cache-dir numpy \
     && pip install --no-cache-dir -r requirements.txt
 

@@ -13,6 +13,9 @@ from adapters.transit_archive import archive as transit_archive
 logger = logging.getLogger(__name__)
 
 try:
+    # Python 3.12 removed distutils from the stdlib. batman still imports
+    # distutils.ccompiler at runtime, so preload setuptools' compatibility shim.
+    import setuptools  # noqa: F401
     import batman
 
     _HAS_BATMAN = True
