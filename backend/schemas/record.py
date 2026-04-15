@@ -42,6 +42,7 @@ class RecordSubmissionRequest(BaseModel):
     title: str
     context: dict[str, Any] = Field(default_factory=dict)
     answers: dict[str, Any] = Field(default_factory=dict)
+    guide_answers: dict[str, str] = Field(default_factory=dict)
 
 
 class RecordSubmissionResponse(BaseModel):

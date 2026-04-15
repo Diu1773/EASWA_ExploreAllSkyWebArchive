@@ -2800,6 +2800,135 @@ body {
   margin-top: 6px;
 }
 
+/* ===== Step Guide (탐구 질문) ===== */
+.transit-guide {
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: rgba(232, 114, 42, 0.04);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.transit-guide-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.transit-guide-toggle:hover {
+  background: rgba(232, 114, 42, 0.06);
+}
+
+.transit-guide-questions {
+  padding: 0 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.transit-guide-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transit-guide-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.55;
+  margin: 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.transit-guide-text::before {
+  content: 'Q.';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 11px;
+  top: 1px;
+}
+
+.transit-guide-ox,
+.transit-guide-choices {
+  display: flex;
+  gap: 8px;
+  padding-left: 16px;
+  flex-wrap: wrap;
+}
+
+.transit-guide-ox-btn,
+.transit-guide-choice-btn {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.transit-guide-ox-btn {
+  width: 42px;
+  height: 34px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.transit-guide-choice-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.transit-guide-ox-btn.correct,
+.transit-guide-choice-btn.correct {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.transit-guide-ox-btn.wrong,
+.transit-guide-choice-btn.wrong {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.transit-guide-choice-btn.reveal {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.transit-guide-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 16px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.transit-guide-textarea {
+  box-sizing: border-box;
+  width: calc(100% - 16px);
+  margin-left: 16px;
+}
+
 .transit-step-actions {
   display: flex;
   flex-direction: column;

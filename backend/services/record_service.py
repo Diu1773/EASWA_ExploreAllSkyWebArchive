@@ -66,6 +66,7 @@ def submit_record(
     answers = _validate_answers(template.questions, request.answers)
     context = dict(request.context)
     context.pop("user", None)
+    guide_answers = {k: str(v) for k, v in request.guide_answers.items() if v}
     _validate_payload_size("Context", context, RECORD_MAX_CONTEXT_BYTES)
     _validate_payload_size("Answers", answers, RECORD_MAX_ANSWERS_BYTES)
 
@@ -90,6 +91,7 @@ def submit_record(
             },
             "context": context,
             "answers": answers,
+            "guide_answers": guide_answers,
         },
     )
     export_path = export_analysis_record(record)

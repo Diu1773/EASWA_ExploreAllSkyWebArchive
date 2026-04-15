@@ -39,6 +39,7 @@ export interface RecordSubmissionRequest {
   title: string;
   context: Record<string, unknown>;
   answers: Record<string, unknown>;
+  guide_answers?: Record<string, string>;
 }
 
 export interface RecordSubmissionResponse {
