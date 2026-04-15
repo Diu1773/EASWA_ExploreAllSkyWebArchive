@@ -13,6 +13,7 @@ from config import (
     SESSION_SECRET,
 )
 from routers import topics, targets, observations, photometry, lightcurve, transit, auth, records, drafts
+from services.transit_fit_service import get_runtime_dependency_status
 
 app = FastAPI(title="EASWA API", version="0.1.0")
 
@@ -43,7 +44,10 @@ app.include_router(drafts.router, prefix="/api")
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "dependencies": get_runtime_dependency_status(),
+    }
 
 
 # ---------- Serve frontend build ----------

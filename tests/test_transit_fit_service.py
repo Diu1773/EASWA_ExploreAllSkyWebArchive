@@ -238,6 +238,7 @@ def test_fit_transit_model_regularizes_noisy_limb_darkening_solution(monkeypatch
 
 def test_fit_transit_model_requires_batman(monkeypatch):
     monkeypatch.setattr(transit_fit_service, "_HAS_BATMAN", False)
+    monkeypatch.setattr(transit_fit_service, "_BATMAN_IMPORT_ERROR", None)
 
     try:
         transit_fit_service.fit_transit_model(
@@ -253,3 +254,51 @@ def test_fit_transit_model_requires_batman(monkeypatch):
         assert str(error) == "Transit fitting requires batman-package in the backend environment."
     else:
         raise AssertionError("Expected fit_transit_model to require batman")
+
+
+def test_fit_transit_model_reports_batman_import_detail(monkeypatch):
+    monkeypatch.setattr(transit_fit_service, "_HAS_BATMAN", False)
+    monkeypatch.setattr(
+        transit_fit_service,
+        "_BATMAN_IMPORT_ERROR",
+        "No module named 'batman'",
+    )
+
+    try:
+        transit_fit_service.fit_transit_model(
+            points=_build_synthetic_points(),
+            period=2.0,
+            t0=1.0,
+            fit_mode="bjd_window",
+            bjd_start=0.82,
+            bjd_end=1.18,
+            fit_limb_darkening=False,
+        )
+    except ValueError as error:
+        assert (
+            str(error)
+            == "Transit fitting requires batman-package in the backend environment. "
+            "Import error: No module named 'batman'"
+        )
+    else:
+        raise AssertionError("Expected fit_transit_model to report batman import detail")
+
+
+def test_runtime_dependency_status_reports_flags(monkeypatch):
+    monkeypatch.setattr(transit_fit_service, "_HAS_BATMAN", False)
+    monkeypatch.setattr(transit_fit_service, "_BATMAN_IMPORT_ERROR", "batman import failed")
+    monkeypatch.setattr(transit_fit_service, "_HAS_EMCEE", True)
+    monkeypatch.setattr(transit_fit_service, "_EMCEE_IMPORT_ERROR", None)
+
+    status = transit_fit_service.get_runtime_dependency_status()
+
+    assert status == {
+        "batman": {
+            "available": False,
+            "error": "batman import failed",
+        },
+        "emcee": {
+            "available": True,
+            "error": None,
+        },
+    }

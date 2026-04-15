@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from queue import Empty, Queue
 from threading import Thread
 from typing import Any, Callable, Generator
@@ -9,19 +10,27 @@ from scipy.optimize import least_squares
 
 from adapters.transit_archive import archive as transit_archive
 
+logger = logging.getLogger(__name__)
+
 try:
     import batman
 
     _HAS_BATMAN = True
-except ImportError:
+    _BATMAN_IMPORT_ERROR: str | None = None
+except Exception as error:
     _HAS_BATMAN = False
+    _BATMAN_IMPORT_ERROR = str(error).strip() or error.__class__.__name__
+    logger.warning("batman import failed: %s", _BATMAN_IMPORT_ERROR)
 
 try:
     import emcee
 
     _HAS_EMCEE = True
-except ImportError:
+    _EMCEE_IMPORT_ERROR: str | None = None
+except Exception as error:
     _HAS_EMCEE = False
+    _EMCEE_IMPORT_ERROR = str(error).strip() or error.__class__.__name__
+    logger.warning("emcee import failed: %s", _EMCEE_IMPORT_ERROR)
 
 from schemas.lightcurve import LightCurvePoint
 from schemas.transit_fit import (
@@ -49,6 +58,26 @@ _INCLINATION_PRIOR_SIGMA = 3.0
 _LD_PRIOR_SIGMA = 0.2
 _DEFAULT_LD_SOURCE = "fixed_default"
 _PHYSICAL_LD_EPS = 1e-4
+
+
+def get_runtime_dependency_status() -> dict[str, dict[str, str | bool | None]]:
+    return {
+        "batman": {
+            "available": _HAS_BATMAN,
+            "error": _BATMAN_IMPORT_ERROR,
+        },
+        "emcee": {
+            "available": _HAS_EMCEE,
+            "error": _EMCEE_IMPORT_ERROR,
+        },
+    }
+
+
+def _batman_missing_message() -> str:
+    message = "Transit fitting requires batman-package in the backend environment."
+    if _BATMAN_IMPORT_ERROR:
+        return f"{message} Import error: {_BATMAN_IMPORT_ERROR}"
+    return message
 
 _FILTER_ALIASES = {
     "clear": "clear",
@@ -235,9 +264,7 @@ def fit_transit_model(
     progress_cb: Callable[[dict[str, Any]], None] | None = None,
 ) -> TransitFitResponse:
     if not _HAS_BATMAN:
-        raise ValueError(
-            "Transit fitting requires batman-package in the backend environment."
-        )
+        raise ValueError(_batman_missing_message())
     _notify_progress(progress_cb, "init", 0.0)
     (
         times,
