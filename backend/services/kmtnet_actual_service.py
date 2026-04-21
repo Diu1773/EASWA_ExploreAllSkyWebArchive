@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
 import logging
 import warnings
@@ -48,6 +49,8 @@ _LIGHTCURVE_SAMPLE_LIMIT_PER_SITE = 4
 _REFERENCE_SAMPLE_COUNT = 3
 _DOWNLOAD_TIMEOUT_SECONDS = 90.0
 _REGISTRATION_MAX_SHIFT_PX = 5
+_SITE_LIGHTCURVE_WORKERS = 4
+_MERGED_LIGHTCURVE_WORKERS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -65,49 +68,102 @@ class _CutoutFrame:
 
 def get_lightcurve(target_id: str, site: str | None = None) -> MicrolensingLightCurveResponse:
     site_token = site.strip().lower() if isinstance(site, str) else "__all__"
-    return _get_lightcurve_cached(target_id, site_token)
+    if site_token == "__all__":
+        return _get_merged_lightcurve_cached(target_id)
+    return _get_single_site_lightcurve_cached(target_id, _normalize_site_key(site_token))
 
 
 @lru_cache(maxsize=24)
-def _get_lightcurve_cached(target_id: str, site_token: str) -> MicrolensingLightCurveResponse:
+def _get_merged_lightcurve_cached(target_id: str) -> MicrolensingLightCurveResponse:
     target = archive.get_target(target_id)
     if not target:
         raise ValueError(f"Target not found: {target_id}")
 
-    site_keys = [_normalize_site_key(site_token)] if site_token != "__all__" else list(_SITE_LABELS)
+    site_curves: list[MicrolensingLightCurveResponse] = []
+    with ThreadPoolExecutor(max_workers=_MERGED_LIGHTCURVE_WORKERS) as executor:
+        futures = {
+            executor.submit(_get_single_site_lightcurve_cached, target_id, site_key): site_key
+            for site_key in _SITE_LABELS
+        }
+        for future in as_completed(futures):
+            site_key = futures[future]
+            try:
+                site_curve = future.result()
+            except Exception as error:
+                logger.warning(
+                    "Skipping merged KMT site curve for %s/%s: %s",
+                    target_id,
+                    site_key,
+                    error,
+                )
+                continue
+            if site_curve.points:
+                site_curves.append(site_curve)
+
+    points = sorted(
+        [point for curve in site_curves for point in curve.points],
+        key=lambda point: point.hjd,
+    )
+    if not points:
+        raise ValueError(f"No KMTNet cutout data available for {target_id}.")
+
+    return MicrolensingLightCurveResponse(
+        target_id=target_id,
+        points=points,
+        x_label="HJD",
+        y_label="Relative magnitude from actual KMTNet cutouts",
+    )
+
+
+@lru_cache(maxsize=24)
+def _get_single_site_lightcurve_cached(
+    target_id: str,
+    site_key: str,
+) -> MicrolensingLightCurveResponse:
+    target = archive.get_target(target_id)
+    if not target:
+        raise ValueError(f"Target not found: {target_id}")
+
     baseline_mag = _target_baseline_magnitude(target)
     points: list[MicrolensingPoint] = []
+    rows = _list_rows(target_id, site_key)
+    if not rows:
+        raise ValueError(f"No KMTNet observations available for {target_id} at {site_key}.")
 
-    for site_key in site_keys:
-        rows = _list_rows(target_id, site_key)
-        if not rows:
-            continue
+    sampled_rows = _downsample_rows(rows, _LIGHTCURVE_SAMPLE_LIMIT_PER_SITE)
+    reference_row = _resolve_reference_row(target_id, site_key, _DEFAULT_CUTOUT_SIZE_PX)
+    try:
+        reference_frame = _load_cutout_frame(target, reference_row, _DEFAULT_CUTOUT_SIZE_PX)
+    except Exception as error:
+        raise ValueError(
+            f"Failed to load KMT reference frame for {target_id}/{site_key}: {error}"
+        ) from error
 
-        sampled_rows = _downsample_rows(rows, _LIGHTCURVE_SAMPLE_LIMIT_PER_SITE)
-        reference_row = _resolve_reference_row(target_id, site_key, _DEFAULT_CUTOUT_SIZE_PX)
-        try:
-            reference_frame = _load_cutout_frame(target, reference_row, _DEFAULT_CUTOUT_SIZE_PX)
-        except Exception as error:
-            logger.warning(
-                "Failed to load KMT reference frame for %s/%s: %s",
-                target_id,
-                site_key,
-                error,
-            )
-            continue
-        reference_flux = max(
-            _measure_aperture_sum(
-                reference_frame.raw_data,
-                reference_frame.target_x,
-                reference_frame.target_y,
-            ),
-            1.0,
-        )
+    reference_flux = max(
+        _measure_aperture_sum(
+            reference_frame.raw_data,
+            reference_frame.target_x,
+            reference_frame.target_y,
+        ),
+        1.0,
+    )
 
-        for row in sampled_rows:
+    with ThreadPoolExecutor(max_workers=min(len(sampled_rows), _SITE_LIGHTCURVE_WORKERS)) as executor:
+        futures = {
+            executor.submit(
+                _extract_site_point,
+                target,
+                row,
+                reference_frame,
+                reference_flux,
+                baseline_mag,
+            ): row
+            for row in sampled_rows
+        }
+        for future in as_completed(futures):
+            row = futures[future]
             try:
-                frame = _load_cutout_frame(target, row, _DEFAULT_CUTOUT_SIZE_PX)
-                aligned_frame = _register_frame_to_reference(frame, reference_frame)
+                point = future.result()
             except Exception as error:
                 logger.warning(
                     "Skipping KMT frame %s for %s/%s during light-curve extraction: %s",
@@ -117,29 +173,8 @@ def _get_lightcurve_cached(target_id: str, site_token: str) -> MicrolensingLight
                     error,
                 )
                 continue
-
-            difference = aligned_frame.bg_subtracted - reference_frame.bg_subtracted
-            difference_flux = _measure_net_flux(
-                difference,
-                reference_frame.target_x,
-                reference_frame.target_y,
-            )
-            total_flux = max(reference_flux + difference_flux, 1.0)
-            flux_error = _estimate_flux_error(
-                aligned_frame.bg_subtracted,
-                reference_frame.target_x,
-                reference_frame.target_y,
-            )
-            mag_error = float(np.clip(1.0857 * flux_error / total_flux, 0.02, 0.35))
-            magnitude = baseline_mag - 2.5 * np.log10(total_flux / reference_flux)
-            points.append(
-                MicrolensingPoint(
-                    hjd=float(row["hjd"]),
-                    site=site_key,
-                    magnitude=round(float(magnitude), 4),
-                    mag_error=round(float(mag_error), 4),
-                )
-            )
+            if point is not None:
+                points.append(point)
 
     points.sort(key=lambda point: point.hjd)
     if not points:
@@ -150,6 +185,37 @@ def _get_lightcurve_cached(target_id: str, site_token: str) -> MicrolensingLight
         points=points,
         x_label="HJD",
         y_label="Relative magnitude from actual KMTNet cutouts",
+    )
+
+
+def _extract_site_point(
+    target: dict[str, Any],
+    row: dict[str, Any],
+    reference_frame: _CutoutFrame,
+    reference_flux: float,
+    baseline_mag: float,
+) -> MicrolensingPoint | None:
+    frame = _load_cutout_frame(target, row, _DEFAULT_CUTOUT_SIZE_PX)
+    aligned_frame = _register_frame_to_reference(frame, reference_frame)
+    difference = aligned_frame.bg_subtracted - reference_frame.bg_subtracted
+    difference_flux = _measure_net_flux(
+        difference,
+        reference_frame.target_x,
+        reference_frame.target_y,
+    )
+    total_flux = max(reference_flux + difference_flux, 1.0)
+    flux_error = _estimate_flux_error(
+        aligned_frame.bg_subtracted,
+        reference_frame.target_x,
+        reference_frame.target_y,
+    )
+    mag_error = float(np.clip(1.0857 * flux_error / total_flux, 0.02, 0.35))
+    magnitude = baseline_mag - 2.5 * np.log10(total_flux / reference_flux)
+    return MicrolensingPoint(
+        hjd=float(row["hjd"]),
+        site=str(frame.site),
+        magnitude=round(float(magnitude), 4),
+        mag_error=round(float(mag_error), 4),
     )
 
 
@@ -333,14 +399,30 @@ def _resolve_reference_observation_id(target_id: str, site_key: str, size_px: in
     candidate_rows = _downsample_rows(rows, min(len(rows), _REFERENCE_SAMPLE_COUNT))
     best_row_id = str(candidate_rows[0]["id"])
     best_flux = None
-    for row in candidate_rows:
-        frame = _load_cutout_frame(target, row, size_px)
-        flux = _measure_net_flux(frame.bg_subtracted, frame.target_x, frame.target_y)
-        if not np.isfinite(flux):
-            continue
-        if best_flux is None or flux < best_flux:
-            best_flux = flux
-            best_row_id = str(row["id"])
+    with ThreadPoolExecutor(max_workers=min(len(candidate_rows), _REFERENCE_SAMPLE_COUNT)) as executor:
+        futures = {
+            executor.submit(_load_cutout_frame, target, row, size_px): row
+            for row in candidate_rows
+        }
+        for future in as_completed(futures):
+            row = futures[future]
+            try:
+                frame = future.result()
+            except Exception as error:
+                logger.warning(
+                    "Skipping KMT reference candidate %s for %s/%s: %s",
+                    row.get("id"),
+                    target_id,
+                    site_key,
+                    error,
+                )
+                continue
+            flux = _measure_net_flux(frame.bg_subtracted, frame.target_x, frame.target_y)
+            if not np.isfinite(flux):
+                continue
+            if best_flux is None or flux < best_flux:
+                best_flux = flux
+                best_row_id = str(row["id"])
     return best_row_id
 
 
