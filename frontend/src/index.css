@@ -2886,6 +2886,20 @@ body {
   margin-top: 6px;
 }
 
+.transit-fit-param-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.transit-callout-info {
+  border-color: rgba(125, 211, 252, 0.22);
+  background: rgba(125, 211, 252, 0.08);
+}
+
 /* ===== Step Guide (탐구 질문) ===== */
 .transit-guide {
   border: 1px solid var(--border-light);
@@ -5750,6 +5764,10 @@ body {
 
 .ml-preview-grid--field {
   grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+}
+
+.ml-preview-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .ml-preview-card {

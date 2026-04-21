@@ -79,10 +79,16 @@ class MicrolensingPreviewResponse(BaseModel):
     preview_width_px: int
     preview_height_px: int
     target_position: MicrolensingPixelCoordinate
+    raw_target_position: MicrolensingPixelCoordinate
+    aligned_target_position: MicrolensingPixelCoordinate
+    reference_target_position: MicrolensingPixelCoordinate
     reference_frame_index: int
     reference_observation_id: str
     reference_hjd: float
+    registration_dx_px: float
+    registration_dy_px: float
     frame_metadata: MicrolensingPreviewFrameMetadata
     raw_image_data_url: str
+    aligned_image_data_url: str
     reference_image_data_url: str
     difference_image_data_url: str

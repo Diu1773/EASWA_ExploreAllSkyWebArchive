@@ -7,14 +7,17 @@ import type { RecordSubmissionResponse } from '../../types/record';
 
 export type KmtnetWorkflowStep =
   | 'field'
+  | 'align'
   | 'difference'
-  | 'lightcurve'
+  | 'extract'
+  | 'merge'
   | 'fit'
   | 'record';
 
 export interface PersistedKmtnetLabState {
   previewFrameIndex: number | null;
-  lightCurve: MicrolensingLightCurveResponse | null;
+  singleSiteCurve: MicrolensingLightCurveResponse | null;
+  mergedCurve: MicrolensingLightCurveResponse | null;
   fitResult: MicrolensingFitResponse | null;
   recordAnswers: Record<string, unknown>;
   recordTitle: string;
@@ -22,7 +25,8 @@ export interface PersistedKmtnetLabState {
 }
 
 export interface KmtnetStepAvailability {
-  hasLightCurve: boolean;
+  hasSingleSiteCurve: boolean;
+  hasMergedCurve: boolean;
   hasFitResult: boolean;
 }
 
@@ -110,11 +114,19 @@ function normalizeFitResponse(value: unknown): MicrolensingFitResponse | null {
 }
 
 function parseKmtnetStep(value: string | null): KmtnetWorkflowStep | null {
-  if (value === 'field' || value === 'difference' || value === 'lightcurve' || value === 'fit' || value === 'record') {
+  if (
+    value === 'field' ||
+    value === 'align' ||
+    value === 'difference' ||
+    value === 'extract' ||
+    value === 'merge' ||
+    value === 'fit' ||
+    value === 'record'
+  ) {
     return value;
   }
   if (value === 'single') return 'field';
-  if (value === 'network') return 'lightcurve';
+  if (value === 'lightcurve' || value === 'network') return 'merge';
   if (value === 'interpret') return 'fit';
   return null;
 }
@@ -127,13 +139,19 @@ function clampKmtnetStep(
     return options.hasFitResult ? 'record' : clampKmtnetStep('fit', options);
   }
   if (requestedStep === 'fit') {
-    return options.hasLightCurve ? 'fit' : 'field';
+    return options.hasMergedCurve ? 'fit' : options.hasSingleSiteCurve ? 'merge' : 'extract';
   }
-  if (requestedStep === 'lightcurve') {
-    return options.hasLightCurve ? 'lightcurve' : 'field';
+  if (requestedStep === 'merge') {
+    return options.hasSingleSiteCurve ? 'merge' : 'extract';
   }
   if (requestedStep === 'difference') {
     return 'difference';
+  }
+  if (requestedStep === 'align') {
+    return 'align';
+  }
+  if (requestedStep === 'extract') {
+    return 'extract';
   }
   return 'field';
 }
@@ -142,7 +160,8 @@ function getKmtnetStepAvailability(
   snapshot: PersistedKmtnetLabState | null,
 ): KmtnetStepAvailability {
   return {
-    hasLightCurve: snapshot?.lightCurve !== null,
+    hasSingleSiteCurve: snapshot?.singleSiteCurve !== null,
+    hasMergedCurve: snapshot?.mergedCurve !== null,
     hasFitResult: snapshot?.fitResult !== null,
   };
 }
@@ -152,7 +171,12 @@ function hasMeaningfulKmtnetSnapshot(
   snapshot: PersistedKmtnetLabState,
 ): boolean {
   if (step !== 'field') return true;
-  return snapshot.previewFrameIndex !== null || snapshot.lightCurve !== null || snapshot.fitResult !== null;
+  return (
+    snapshot.previewFrameIndex !== null ||
+    snapshot.singleSiteCurve !== null ||
+    snapshot.mergedCurve !== null ||
+    snapshot.fitResult !== null
+  );
 }
 
 export function createKmtnetWorkflowDefinition({
@@ -174,13 +198,19 @@ export function createKmtnetWorkflowDefinition({
       if (!raw || typeof raw !== 'object') return null;
       const candidate = raw as Partial<PersistedKmtnetLabState> & {
         lcData?: MicrolensingLightCurveResponse | null;
+        lightCurve?: MicrolensingLightCurveResponse | null;
       };
+      const normalizedLegacyCurve = normalizeLightCurveResponse(
+        candidate.mergedCurve ?? candidate.lightCurve ?? candidate.lcData ?? null,
+        targetId,
+      );
       return {
         previewFrameIndex: normalizeOptionalInteger(candidate.previewFrameIndex),
-        lightCurve: normalizeLightCurveResponse(
-          candidate.lightCurve ?? candidate.lcData ?? null,
+        singleSiteCurve: normalizeLightCurveResponse(
+          candidate.singleSiteCurve ?? null,
           targetId,
         ),
+        mergedCurve: normalizedLegacyCurve,
         fitResult: normalizeFitResponse(candidate.fitResult),
         recordAnswers:
           candidate.recordAnswers && typeof candidate.recordAnswers === 'object'

@@ -112,6 +112,23 @@ const STEP_GUIDES: Record<TransitStep, GuideQuestion[]> = {
 
 type GuideAnswers = Record<string, string>;
 
+function describeLimbDarkeningSource(source: string | null | undefined): string {
+  if (!source) return 'automatic filter-based coefficients';
+  if (source === 'meidem_claret2017_quadratic') {
+    return 'Claret 2017 TESS coefficient grid';
+  }
+  if (source === 'meidem_claret2011_quadratic') {
+    return 'Claret 2011 coefficient grid';
+  }
+  if (source === 'stellar_filter_heuristic') {
+    return 'filter + host-star heuristic';
+  }
+  if (source === 'filter_default') {
+    return 'filter default coefficients';
+  }
+  return source.replace(/_/g, ' ');
+}
+
 function StepGuide({ step, onAnswersChange }: { step: TransitStep; onAnswersChange?: (answers: GuideAnswers) => void }) {
   const storageKey = `easwa_guide_open_${step}`;
   const [open, setOpen] = useState(() => {
@@ -371,6 +388,19 @@ export function TransitLab({
     ? `${fitResult.used_batman ? 'batman transit model' : 'simplified transit model'} · ${
         fitResult.used_mcmc ? 'emcee MCMC posterior' : 'least-squares optimization'
       }`
+    : null;
+  const fitLimbDarkeningSource =
+    fitResult?.limb_darkening_source ?? fitResult?.preprocessing.limb_darkening_source ?? null;
+  const fitLimbDarkeningFilter =
+    fitResult?.limb_darkening_filter ?? fitResult?.preprocessing.limb_darkening_filter ?? null;
+  const fitLimbDarkeningExplanation = fitResult
+    ? fitLimbDarkening
+      ? `u₁ and u₂ were allowed to vary during the fit, starting from ${describeLimbDarkeningSource(
+          fitLimbDarkeningSource,
+        )}${fitLimbDarkeningFilter ? ` for the ${fitLimbDarkeningFilter} band` : ''}.`
+      : `u₁ and u₂ were automatically set from ${describeLimbDarkeningSource(
+          fitLimbDarkeningSource,
+        )}${fitLimbDarkeningFilter ? ` for the ${fitLimbDarkeningFilter} band` : ''}, using the host-star parameters when available, and then held fixed during the fit.`
     : null;
   const workflowSessionSource: WorkflowSessionSource =
     draftId && draftId.trim() !== ''
@@ -3053,6 +3083,11 @@ export function TransitLab({
                   <div className="transit-callout">
                     Method used: {fitEngineLabel}
                   </div>
+                  {fitLimbDarkeningExplanation && (
+                    <div className="transit-callout transit-callout-info">
+                      Limb darkening: {fitLimbDarkeningExplanation}
+                    </div>
+                  )}
                   <div className="transit-callout">
                     The fitted transit model is drawn directly on the current Step 5 ROI view.
                   </div>
@@ -3197,6 +3232,11 @@ export function TransitLab({
                       Quadratic limb darkening coefficients describe how the star appears
                       darker at its edges. Affects the transit shape during ingress/egress.
                     </p>
+                    {fitLimbDarkeningExplanation && (
+                      <p className="transit-fit-param-note">
+                        {fitLimbDarkeningExplanation}
+                      </p>
+                    )}
                   </div>
                   <div className="transit-fit-param-card">
                     <span className="transit-fit-param-label">Fit Quality</span>

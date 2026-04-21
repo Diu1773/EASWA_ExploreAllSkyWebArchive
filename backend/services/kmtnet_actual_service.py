@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import warnings
 from dataclasses import dataclass
 from functools import lru_cache
@@ -16,6 +17,7 @@ from astropy.nddata import Cutout2D
 from astropy.utils.exceptions import AstropyWarning
 from astropy.wcs import FITSFixedWarning, WCS
 from PIL import Image
+from scipy import ndimage
 
 from adapters.kmtnet_archive import archive
 from schemas.microlensing import (
@@ -45,6 +47,9 @@ _MAX_CUTOUT_SIZE_PX = 96
 _LIGHTCURVE_SAMPLE_LIMIT_PER_SITE = 4
 _REFERENCE_SAMPLE_COUNT = 3
 _DOWNLOAD_TIMEOUT_SECONDS = 90.0
+_REGISTRATION_MAX_SHIFT_PX = 5
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -59,11 +64,17 @@ class _CutoutFrame:
 
 
 def get_lightcurve(target_id: str, site: str | None = None) -> MicrolensingLightCurveResponse:
+    site_token = site.strip().lower() if isinstance(site, str) else "__all__"
+    return _get_lightcurve_cached(target_id, site_token)
+
+
+@lru_cache(maxsize=24)
+def _get_lightcurve_cached(target_id: str, site_token: str) -> MicrolensingLightCurveResponse:
     target = archive.get_target(target_id)
     if not target:
         raise ValueError(f"Target not found: {target_id}")
 
-    site_keys = [_normalize_site_key(site)] if site else list(_SITE_LABELS)
+    site_keys = [_normalize_site_key(site_token)] if site_token != "__all__" else list(_SITE_LABELS)
     baseline_mag = _target_baseline_magnitude(target)
     points: list[MicrolensingPoint] = []
 
@@ -74,7 +85,16 @@ def get_lightcurve(target_id: str, site: str | None = None) -> MicrolensingLight
 
         sampled_rows = _downsample_rows(rows, _LIGHTCURVE_SAMPLE_LIMIT_PER_SITE)
         reference_row = _resolve_reference_row(target_id, site_key, _DEFAULT_CUTOUT_SIZE_PX)
-        reference_frame = _load_cutout_frame(target, reference_row, _DEFAULT_CUTOUT_SIZE_PX)
+        try:
+            reference_frame = _load_cutout_frame(target, reference_row, _DEFAULT_CUTOUT_SIZE_PX)
+        except Exception as error:
+            logger.warning(
+                "Failed to load KMT reference frame for %s/%s: %s",
+                target_id,
+                site_key,
+                error,
+            )
+            continue
         reference_flux = max(
             _measure_aperture_sum(
                 reference_frame.raw_data,
@@ -85,15 +105,31 @@ def get_lightcurve(target_id: str, site: str | None = None) -> MicrolensingLight
         )
 
         for row in sampled_rows:
-            frame = _load_cutout_frame(target, row, _DEFAULT_CUTOUT_SIZE_PX)
-            difference = frame.bg_subtracted - reference_frame.bg_subtracted
+            try:
+                frame = _load_cutout_frame(target, row, _DEFAULT_CUTOUT_SIZE_PX)
+                aligned_frame = _register_frame_to_reference(frame, reference_frame)
+            except Exception as error:
+                logger.warning(
+                    "Skipping KMT frame %s for %s/%s during light-curve extraction: %s",
+                    row.get("id"),
+                    target_id,
+                    site_key,
+                    error,
+                )
+                continue
+
+            difference = aligned_frame.bg_subtracted - reference_frame.bg_subtracted
             difference_flux = _measure_net_flux(
                 difference,
-                frame.target_x,
-                frame.target_y,
+                reference_frame.target_x,
+                reference_frame.target_y,
             )
             total_flux = max(reference_flux + difference_flux, 1.0)
-            flux_error = _estimate_flux_error(frame.bg_subtracted, frame.target_x, frame.target_y)
+            flux_error = _estimate_flux_error(
+                aligned_frame.bg_subtracted,
+                reference_frame.target_x,
+                reference_frame.target_y,
+            )
             mag_error = float(np.clip(1.0857 * flux_error / total_flux, 0.02, 0.35))
             magnitude = baseline_mag - 2.5 * np.log10(total_flux / reference_flux)
             points.append(
@@ -154,7 +190,8 @@ def _get_preview_cached(
 
     selected_frame = _load_cutout_frame(target, selected_row, resolved_size_px)
     reference_frame = _load_cutout_frame(target, reference_row, resolved_size_px)
-    difference_frame = selected_frame.bg_subtracted - reference_frame.bg_subtracted
+    aligned_frame = _register_frame_to_reference(selected_frame, reference_frame)
+    difference_frame = aligned_frame.bg_subtracted - reference_frame.bg_subtracted
 
     reference_flux = max(
         _measure_aperture_sum(
@@ -166,8 +203,8 @@ def _get_preview_cached(
     )
     difference_flux = _measure_net_flux(
         difference_frame,
-        selected_frame.target_x,
-        selected_frame.target_y,
+        reference_frame.target_x,
+        reference_frame.target_y,
     )
     total_flux = max(reference_flux + difference_flux, 1.0)
     magnitude = _target_baseline_magnitude(target) - 2.5 * np.log10(total_flux / reference_flux)
@@ -175,9 +212,9 @@ def _get_preview_cached(
         np.clip(
             1.0857
             * _estimate_flux_error(
-                selected_frame.bg_subtracted,
-                selected_frame.target_x,
-                selected_frame.target_y,
+                aligned_frame.bg_subtracted,
+                reference_frame.target_x,
+                reference_frame.target_y,
             )
             / total_flux,
             0.02,
@@ -198,12 +235,26 @@ def _get_preview_cached(
         preview_width_px=_PREVIEW_IMAGE_SIZE_PX,
         preview_height_px=_PREVIEW_IMAGE_SIZE_PX,
         target_position=MicrolensingPixelCoordinate(
+            x=round(float(reference_frame.target_x), 2),
+            y=round(float(reference_frame.target_y), 2),
+        ),
+        raw_target_position=MicrolensingPixelCoordinate(
             x=round(float(selected_frame.target_x), 2),
             y=round(float(selected_frame.target_y), 2),
+        ),
+        aligned_target_position=MicrolensingPixelCoordinate(
+            x=round(float(reference_frame.target_x), 2),
+            y=round(float(reference_frame.target_y), 2),
+        ),
+        reference_target_position=MicrolensingPixelCoordinate(
+            x=round(float(reference_frame.target_x), 2),
+            y=round(float(reference_frame.target_y), 2),
         ),
         reference_frame_index=reference_frame_index,
         reference_observation_id=str(reference_row["id"]),
         reference_hjd=float(reference_row["hjd"]),
+        registration_dx_px=round(float(aligned_frame.shift_x), 2),
+        registration_dy_px=round(float(aligned_frame.shift_y), 2),
         frame_metadata=MicrolensingPreviewFrameMetadata(
             frame_index=resolved_frame_index,
             observation_id=str(selected_row["id"]),
@@ -218,6 +269,7 @@ def _get_preview_cached(
             magnification=round(float(total_flux / reference_flux), 3),
         ),
         raw_image_data_url=_encode_intensity_image(selected_frame.raw_data),
+        aligned_image_data_url=_encode_intensity_image(aligned_frame.raw_data),
         reference_image_data_url=_encode_intensity_image(reference_frame.raw_data),
         difference_image_data_url=_encode_difference_image(difference_frame),
     )
@@ -298,6 +350,32 @@ def _resolve_reference_row(target_id: str, site_key: str, size_px: int) -> dict[
     return next((row for row in rows if str(row["id"]) == observation_id), rows[0])
 
 
+@dataclass(frozen=True)
+class _RegisteredFrame:
+    raw_data: np.ndarray
+    bg_subtracted: np.ndarray
+    shift_x: float
+    shift_y: float
+
+
+def _register_frame_to_reference(
+    frame: _CutoutFrame,
+    reference_frame: _CutoutFrame,
+) -> _RegisteredFrame:
+    shift_x, shift_y = _estimate_registration_shift(
+        reference_frame.bg_subtracted,
+        frame.bg_subtracted,
+    )
+    aligned_raw = _shift_image(frame.raw_data, shift_x=shift_x, shift_y=shift_y)
+    aligned_bg = _shift_image(frame.bg_subtracted, shift_x=shift_x, shift_y=shift_y)
+    return _RegisteredFrame(
+        raw_data=aligned_raw,
+        bg_subtracted=aligned_bg,
+        shift_x=shift_x,
+        shift_y=shift_y,
+    )
+
+
 def _load_cutout_frame(target: dict[str, Any], row: dict[str, Any], size_px: int) -> _CutoutFrame:
     site_key = _site_key_for_row(row)
     if site_key is None:
@@ -370,6 +448,60 @@ def _estimate_background(image: np.ndarray) -> float:
     if finite.size == 0:
         return 0.0
     return float(np.nanmedian(finite))
+
+
+def _estimate_registration_shift(
+    reference_image: np.ndarray,
+    moving_image: np.ndarray,
+    max_shift_px: int = _REGISTRATION_MAX_SHIFT_PX,
+) -> tuple[float, float]:
+    ref = np.asarray(reference_image, dtype=np.float32)
+    mov = np.asarray(moving_image, dtype=np.float32)
+
+    ref_finite = ref[np.isfinite(ref)]
+    mov_finite = mov[np.isfinite(mov)]
+    if ref_finite.size == 0 or mov_finite.size == 0:
+        return 0.0, 0.0
+
+    ref_centered = np.nan_to_num(ref - float(np.nanmedian(ref_finite)), nan=0.0)
+    mov_centered = np.nan_to_num(mov - float(np.nanmedian(mov_finite)), nan=0.0)
+    feature_level = float(np.nanpercentile(np.abs(ref_centered), 75.0))
+    if not np.isfinite(feature_level) or feature_level <= 0.0:
+        feature_mask = np.ones(ref_centered.shape, dtype=bool)
+    else:
+        feature_mask = np.abs(ref_centered) >= feature_level
+
+    best_shift = (0.0, 0.0)
+    best_score = float("inf")
+
+    for shift_y in range(-max_shift_px, max_shift_px + 1):
+        for shift_x in range(-max_shift_px, max_shift_px + 1):
+            shifted = _shift_image(mov_centered, shift_x=shift_x, shift_y=shift_y, cval=0.0)
+            residual = ref_centered[feature_mask] - shifted[feature_mask]
+            score = float(np.mean(residual**2))
+            if score < best_score:
+                best_score = score
+                best_shift = (float(shift_x), float(shift_y))
+
+    return best_shift
+
+
+def _shift_image(
+    image: np.ndarray,
+    *,
+    shift_x: float,
+    shift_y: float,
+    cval: float = np.nan,
+) -> np.ndarray:
+    shifted = ndimage.shift(
+        np.asarray(image, dtype=np.float32),
+        shift=(float(shift_y), float(shift_x)),
+        order=1,
+        mode="constant",
+        cval=float(cval),
+        prefilter=False,
+    )
+    return np.asarray(shifted, dtype=np.float32)
 
 
 def _measure_net_flux(
@@ -471,6 +603,7 @@ def _encode_intensity_image(image: np.ndarray) -> str:
     if high <= low:
         high = low + 1.0
     normalized = np.clip((image - low) / (high - low), 0.0, 1.0)
+    normalized = np.nan_to_num(normalized, nan=0.0, posinf=1.0, neginf=0.0)
     stretched = np.arcsinh(normalized * 8.0) / np.arcsinh(8.0)
     rgb = np.stack(
         [
@@ -479,7 +612,8 @@ def _encode_intensity_image(image: np.ndarray) -> str:
             np.power(stretched, 0.72) * 196.0 + 22.0,
         ],
         axis=-1,
-    ).astype(np.uint8)
+    )
+    rgb = np.nan_to_num(rgb, nan=0.0, posinf=255.0, neginf=0.0).astype(np.uint8)
     return _encode_rgb_image(rgb)
 
 
@@ -489,6 +623,7 @@ def _encode_difference_image(image: np.ndarray) -> str:
     if scale <= 0:
         scale = 1.0
     normalized = np.clip(image / scale, -1.0, 1.0)
+    normalized = np.nan_to_num(normalized, nan=0.0, posinf=1.0, neginf=-1.0)
     pos = np.clip(normalized, 0.0, 1.0)
     neg = np.clip(-normalized, 0.0, 1.0)
     mid = 1.0 - np.clip(np.abs(normalized), 0.0, 1.0)
@@ -499,7 +634,8 @@ def _encode_difference_image(image: np.ndarray) -> str:
             neg * 255.0 + mid * 24.0,
         ],
         axis=-1,
-    ).astype(np.uint8)
+    )
+    rgb = np.nan_to_num(rgb, nan=0.0, posinf=255.0, neginf=0.0).astype(np.uint8)
     return _encode_rgb_image(rgb)
 
 

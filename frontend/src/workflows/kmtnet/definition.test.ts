@@ -8,8 +8,10 @@ describe('createKmtnetWorkflowDefinition.normalizeSnapshot', () => {
 
   it('maps legacy step ids onto the new workflow', () => {
     expect(definition.parseStep('single')).toBe('field');
-    expect(definition.parseStep('network')).toBe('lightcurve');
+    expect(definition.parseStep('network')).toBe('merge');
+    expect(definition.parseStep('lightcurve')).toBe('merge');
     expect(definition.parseStep('interpret')).toBe('fit');
+    expect(definition.parseStep('align')).toBe('align');
     expect(definition.parseStep('difference')).toBe('difference');
   });
 
@@ -28,7 +30,7 @@ describe('createKmtnetWorkflowDefinition.normalizeSnapshot', () => {
 
     expect(snapshot).not.toBeNull();
     expect(snapshot?.previewFrameIndex).toBeNull();
-    expect(snapshot?.lightCurve?.points).toHaveLength(2);
+    expect(snapshot?.mergedCurve?.points).toHaveLength(2);
     expect(snapshot?.fitResult).toBeNull();
   });
 
@@ -48,7 +50,7 @@ describe('createKmtnetWorkflowDefinition.normalizeSnapshot', () => {
       },
     });
 
-    expect(snapshot?.lightCurve).not.toBeNull();
+    expect(snapshot?.mergedCurve).not.toBeNull();
     expect(snapshot?.fitResult).toBeNull();
   });
 

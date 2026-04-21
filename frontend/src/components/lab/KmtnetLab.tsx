@@ -49,21 +49,31 @@ const SITE_PHOTOS: Record<string, string | null> = {
 };
 const ALL_SITES = ['ctio', 'saao', 'sso'];
 
-const KMT_GUIDES: Record<'field' | 'difference' | 'lightcurve' | 'fit', GuideQuestion[]> = {
+const KMT_GUIDES: Record<'field' | 'align' | 'difference' | 'extract' | 'merge' | 'fit', GuideQuestion[]> = {
   field: [
     { type: 'ox', id: 'kmt_field_q1', text: '단일 관측소 하나만으로 KMTNet 이벤트를 놓치지 않고 24시간 관측할 수 있다.', correct: 'X', explanation: '지상 망원경은 낮 동안 관측이 불가능합니다. 단일 관측소는 하루 약 8시간의 공백이 생겨 결정적인 피크 순간을 놓칠 수 있습니다.' },
     { type: 'choice', id: 'kmt_field_q2', text: '원본 KMTNet 은하벌지 영상에서 측광이 어려운 가장 큰 이유는?', options: ['별이 너무 빽빽하게 섞여 있다', '노출 시간이 너무 짧다', '모든 별이 너무 어둡다', '색지수 정보가 없다'], correct: '별이 너무 빽빽하게 섞여 있다', explanation: '은하벌지 방향은 별 밀도가 높아 한 픽셀 근처에 여러 별의 광도가 겹칩니다. 그래서 단순 aperture photometry만으로는 변하는 소스를 분리하기 어렵습니다.' },
     { type: 'open', id: 'kmt_field_q3', text: '선택한 관측소의 원본 frame에서, 이벤트 위치를 그냥 눈으로 바로 찾기 어려운 이유를 적어보자.' },
+  ],
+  align: [
+    { type: 'ox', id: 'kmt_align_q1', text: 'KMT 원본 frame들은 항상 완벽하게 같은 픽셀 위치에 정렬되어 있으므로 추가 정렬이 필요 없다.', correct: 'X', explanation: '실제 관측 프레임은 pointing과 WCS 오차 때문에 미세하게 어긋납니다. reference에 맞춰 등록해야 차분 품질이 좋아집니다.' },
+    { type: 'choice', id: 'kmt_align_q2', text: '정렬 이후 가장 먼저 확인해야 할 것은?', options: ['별상이 reference와 얼마나 겹치는가', '배경색이 더 예쁜가', 'HJD가 커졌는가', '노출시간이 같아졌는가'], correct: '별상이 reference와 얼마나 겹치는가', explanation: '정렬의 목적은 기준 프레임과 현재 프레임의 별상을 같은 위치에 맞추는 것입니다.' },
+    { type: 'open', id: 'kmt_align_q3', text: '정렬 전후 이미지를 비교해서 별 위치가 어떻게 달라지는지 적어보자.' },
   ],
   difference: [
     { type: 'ox', id: 'kmt_diff_q1', text: '차분영상에서는 기준영상과 변하지 않는 별빛이 대부분 제거되고, 시간에 따라 변한 성분만 남는다.', correct: 'O', explanation: 'reference를 빼면 거의 일정한 별은 상쇄되고, 해당 시점에 밝기 변화가 생긴 위치만 residual로 남습니다.' },
     { type: 'choice', id: 'kmt_diff_q2', text: 'Difference image에서 밝은 잔차가 의미하는 것은?', options: ['기준영상보다 현재 프레임에서 더 밝아졌다', '현재 프레임에서 소스가 사라졌다', '배경 하늘 밝기가 증가했다', '좌표 보정이 실패했다'], correct: '기준영상보다 현재 프레임에서 더 밝아졌다', explanation: '현재 시점의 광도가 기준영상보다 크면 positive residual이 남습니다. 미시중력렌즈 피크 부근이 여기에 해당합니다.' },
     { type: 'open', id: 'kmt_diff_q3', text: 'frame 슬라이더를 움직이며 residual이 가장 강하게 보이는 구간을 찾고, 그때 HJD가 왜 중요한지 설명해보자.' },
   ],
-  lightcurve: [
-    { type: 'ox', id: 'kmt_curve_q1', text: 'CTIO · SAAO · SSO는 경도 약 120° 간격으로 배치되어 24시간 연속 감시에 가깝게 운용된다.', correct: 'O', explanation: '경도 120° 간격으로 배치된 3개 관측소가 각자의 낮 시간 공백을 서로 메워 연속 감시에 가까운 커버리지를 제공합니다.' },
-    { type: 'choice', id: 'kmt_curve_q2', text: 'single-site 곡선과 network-merged 곡선을 비교할 때 가장 먼저 봐야 할 것은?', options: ['피크와 공백 구간이 얼마나 채워지는가', '그래프 배경색', '오차막대의 색상', '별자리 이름'], correct: '피크와 공백 구간이 얼마나 채워지는가', explanation: 'KMTNet의 강점은 네트워크 병합으로 피크와 anomaly를 놓치지 않는 것입니다. 공백이 얼마나 줄어드는지가 핵심입니다.' },
-    { type: 'open', id: 'kmt_curve_q3', text: 'single-site 결과와 3-site merged 결과를 비교해서, 어떤 정보가 추가로 보이는지 적어보자.' },
+  extract: [
+    { type: 'ox', id: 'kmt_extract_q1', text: 'single-site 곡선은 선택한 관측소 데이터만으로 만들어진다.', correct: 'O', explanation: '먼저 단일 관측소에서 difference flux를 추출해 기초적인 이벤트 형태를 확인합니다.' },
+    { type: 'choice', id: 'kmt_extract_q2', text: 'single-site 곡선을 먼저 보는 이유는?', options: ['관측소별 데이터 품질과 공백을 먼저 확인하려고', '세 관측소를 합치면 그래프가 너무 길어서', '모든 미중렌 이벤트는 단일 관측소만으로 충분해서', '행성 이벤트는 merge가 불가능해서'], correct: '관측소별 데이터 품질과 공백을 먼저 확인하려고', explanation: '단일 관측소 곡선을 먼저 보면 공백, 잡음, 피크 포착 여부를 개별적으로 판단할 수 있습니다.' },
+    { type: 'open', id: 'kmt_extract_q3', text: '선택한 관측소의 곡선만 봤을 때 남는 공백이나 한계를 적어보자.' },
+  ],
+  merge: [
+    { type: 'ox', id: 'kmt_merge_q1', text: 'CTIO · SAAO · SSO는 경도 약 120° 간격으로 배치되어 24시간 연속 감시에 가깝게 운용된다.', correct: 'O', explanation: '경도 120° 간격으로 배치된 3개 관측소가 각자의 낮 시간 공백을 서로 메워 연속 감시에 가까운 커버리지를 제공합니다.' },
+    { type: 'choice', id: 'kmt_merge_q2', text: 'single-site 곡선과 network-merged 곡선을 비교할 때 가장 먼저 봐야 할 것은?', options: ['피크와 공백 구간이 얼마나 채워지는가', '그래프 배경색', '오차막대의 색상', '별자리 이름'], correct: '피크와 공백 구간이 얼마나 채워지는가', explanation: 'KMTNet의 강점은 네트워크 병합으로 피크와 anomaly를 놓치지 않는 것입니다. 공백이 얼마나 줄어드는지가 핵심입니다.' },
+    { type: 'open', id: 'kmt_merge_q3', text: 'single-site 결과와 3-site merged 결과를 비교해서, 어떤 정보가 추가로 보이는지 적어보자.' },
   ],
   fit: [
     { type: 'ox', id: 'kmt_fit_q1', text: 'u₀(충격 파라미터)가 작을수록 미시중력렌즈 최대 증폭은 커진다.', correct: 'O', explanation: 'u₀가 작을수록 렌즈와 광원이 더 잘 정렬되어 증폭이 커집니다. u₀가 0에 가까울수록 아인슈타인 링 조건에 접근합니다.' },
@@ -80,27 +90,30 @@ interface Props {
   seedRecordId?: number | null;
 }
 
-function StepBar({ current, hasLightCurve, hasFitResult }: {
+function StepBar({ current, hasSingleSiteCurve, hasMergedCurve, hasFitResult }: {
   current: KmtnetWorkflowStep;
-  hasLightCurve: boolean;
+  hasSingleSiteCurve: boolean;
+  hasMergedCurve: boolean;
   hasFitResult: boolean;
 }) {
   const steps = [
     { id: 'field' as const, number: 1, label: 'Field' },
-    { id: 'difference' as const, number: 2, label: 'Difference' },
-    { id: 'lightcurve' as const, number: 3, label: 'Light Curve' },
-    { id: 'fit' as const, number: 4, label: 'Fit' },
-    { id: 'record' as const, number: 5, label: '결과 저장' },
+    { id: 'align' as const, number: 2, label: 'Align' },
+    { id: 'difference' as const, number: 3, label: 'Difference' },
+    { id: 'extract' as const, number: 4, label: 'Extract' },
+    { id: 'merge' as const, number: 5, label: 'Merge' },
+    { id: 'fit' as const, number: 6, label: 'Fit' },
+    { id: 'record' as const, number: 7, label: '결과 저장' },
   ];
-  const stepOrder: KmtnetWorkflowStep[] = ['field', 'difference', 'lightcurve', 'fit', 'record'];
+  const stepOrder: KmtnetWorkflowStep[] = ['field', 'align', 'difference', 'extract', 'merge', 'fit', 'record'];
   const currentIndex = stepOrder.indexOf(current);
   const getState = (stepId: KmtnetWorkflowStep) => {
     const stepIndex = stepOrder.indexOf(stepId);
     if (stepIndex < currentIndex) return 'done';
     if (stepId === current) return 'active';
     if (stepId === 'record') return hasFitResult ? 'accessible' : 'locked';
-    if (stepId === 'fit') return hasLightCurve ? 'accessible' : 'locked';
-    if (stepId === 'lightcurve') return hasLightCurve ? 'accessible' : 'locked';
+    if (stepId === 'fit') return hasMergedCurve ? 'accessible' : 'locked';
+    if (stepId === 'merge') return hasSingleSiteCurve ? 'accessible' : 'locked';
     return 'accessible';
   };
 
@@ -211,8 +224,8 @@ function RawFieldCard({
   frameLoading?: boolean;
   onFrameChange?: (frameIndex: number) => void;
 }) {
-  const left = `${(preview.target_position.x / preview.cutout_width_px) * 100}%`;
-  const top = `${(preview.target_position.y / preview.cutout_height_px) * 100}%`;
+  const left = `${(preview.raw_target_position.x / preview.cutout_width_px) * 100}%`;
+  const top = `${(preview.raw_target_position.y / preview.cutout_height_px) * 100}%`;
 
   return (
     <section className="ml-preview-panel">
@@ -310,6 +323,100 @@ function RawFieldCard({
             <p className="hint">새 raw frame을 불러오는 중...</p>
           )}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function AlignmentPanel({
+  preview,
+  frameChangeDisabled = false,
+  frameLoading = false,
+  onFrameChange,
+}: {
+  preview: MicrolensingPreviewResponse;
+  frameChangeDisabled?: boolean;
+  frameLoading?: boolean;
+  onFrameChange?: (frameIndex: number) => void;
+}) {
+  const rawLeft = `${(preview.raw_target_position.x / preview.cutout_width_px) * 100}%`;
+  const rawTop = `${(preview.raw_target_position.y / preview.cutout_height_px) * 100}%`;
+  const alignedLeft = `${(preview.aligned_target_position.x / preview.cutout_width_px) * 100}%`;
+  const alignedTop = `${(preview.aligned_target_position.y / preview.cutout_height_px) * 100}%`;
+
+  return (
+    <section className="ml-preview-panel">
+      <div className="ml-preview-head">
+        <div>
+          <span className="ml-preview-kicker">Frame Registration</span>
+          <h4>Raw / Aligned 비교</h4>
+        </div>
+        <div className="ml-preview-stats">
+          <span>Δx {preview.registration_dx_px >= 0 ? '+' : ''}{preview.registration_dx_px.toFixed(2)} px</span>
+          <span>Δy {preview.registration_dy_px >= 0 ? '+' : ''}{preview.registration_dy_px.toFixed(2)} px</span>
+          <span>{preview.frame_metadata.filter_band ?? 'I'}-band · {preview.frame_metadata.exposure_sec?.toFixed(0) ?? '120'} s</span>
+        </div>
+      </div>
+
+      <div className="ml-preview-toolbar">
+        <div className="ml-preview-toolbar-group">
+          <button type="button" className="btn-sm" disabled={frameChangeDisabled || preview.frame_index <= 0} onClick={() => onFrameChange?.(0)}>First</button>
+          <button type="button" className="btn-sm" disabled={frameChangeDisabled || preview.frame_index <= 0} onClick={() => onFrameChange?.(Math.max(0, preview.frame_index - 1))}>Prev</button>
+          <button type="button" className="btn-sm" disabled={frameChangeDisabled || preview.frame_index >= preview.frame_count - 1} onClick={() => onFrameChange?.(Math.min(preview.frame_count - 1, preview.frame_index + 1))}>Next</button>
+          <button type="button" className="btn-sm" disabled={frameChangeDisabled || preview.frame_index >= preview.frame_count - 1} onClick={() => onFrameChange?.(preview.frame_count - 1)}>Last</button>
+        </div>
+        <div className="ml-preview-toolbar-group ml-preview-toolbar-group--grow">
+          <span className="selected-count">
+            Frame {preview.frame_index + 1} / {preview.frame_count}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(preview.frame_count - 1, 0)}
+            step={1}
+            value={preview.frame_index}
+            disabled={frameChangeDisabled}
+            onChange={(event) => onFrameChange?.(Number(event.target.value))}
+          />
+        </div>
+      </div>
+
+      <div className="ml-preview-grid ml-preview-grid--two">
+        <article className="ml-preview-card">
+          <div className="ml-preview-card-head">
+            <strong>Raw Frame</strong>
+            <span>WCS cutout only</span>
+          </div>
+          <div className="ml-preview-stage">
+            <img src={preview.raw_image_data_url} alt="Raw frame" className="ml-preview-image" />
+            <div className="ml-preview-marker" style={{ left: rawLeft, top: rawTop }} aria-hidden="true" />
+          </div>
+        </article>
+        <article className="ml-preview-card">
+          <div className="ml-preview-card-head">
+            <strong>Aligned Frame</strong>
+            <span>reference에 맞춰 픽셀 이동</span>
+          </div>
+          <div className="ml-preview-stage">
+            <img src={preview.aligned_image_data_url} alt="Aligned frame" className="ml-preview-image" />
+            <div
+              className="ml-preview-marker"
+              style={{ left: alignedLeft, top: alignedTop }}
+              aria-hidden="true"
+            />
+          </div>
+        </article>
+      </div>
+
+      <div className="ml-preview-note">
+        <span>
+          현재 프레임은 기준 프레임에 맞춰 <strong>x {preview.registration_dx_px >= 0 ? '+' : ''}{preview.registration_dx_px.toFixed(2)} px</strong>,
+          <strong> y {preview.registration_dy_px >= 0 ? '+' : ''}{preview.registration_dy_px.toFixed(2)} px</strong> 만큼 이동했습니다.
+        </span>
+        <span>
+          정렬이 맞을수록 별상이 reference와 더 잘 겹치고, 다음 단계 difference image에서 잔차가 더 깔끔하게 남습니다.
+          {frameLoading ? ' 새 프레임을 불러오는 중입니다…' : ''}
+        </span>
       </div>
     </section>
   );
@@ -459,7 +566,8 @@ export function KmtnetLab({
   const [previewFrameIndex, setPreviewFrameIndex] = useState<number | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [lcData, setLcData] = useState<MicrolensingLightCurveResponse | null>(null);
+  const [singleSiteCurve, setSingleSiteCurve] = useState<MicrolensingLightCurveResponse | null>(null);
+  const [mergedCurve, setMergedCurve] = useState<MicrolensingLightCurveResponse | null>(null);
   const [fitResult, setFitResult] = useState<MicrolensingFitResponse | null>(null);
   const [recordTemplate, setRecordTemplate] = useState<RecordTemplate | null>(
     defaultKmtnetRecordTemplate,
@@ -471,7 +579,8 @@ export function KmtnetLab({
   const [submittedRecord, setSubmittedRecord] = useState<RecordSubmissionResponse | null>(null);
   const [recordSubmitting, setRecordSubmitting] = useState(false);
   const [fitting, setFitting] = useState(false);
-  const [lightCurveLoading, setLightCurveLoading] = useState(false);
+  const [singleSiteLoading, setSingleSiteLoading] = useState(false);
+  const [mergedLoading, setMergedLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sitePhotoError, setSitePhotoError] = useState(false);
   const recordTemplateRequestedRef = useRef(false);
@@ -490,13 +599,14 @@ export function KmtnetLab({
   const workflowSnapshot: PersistedKmtnetLabState = useMemo(
     () => ({
       previewFrameIndex,
-      lightCurve: lcData,
+      singleSiteCurve,
+      mergedCurve,
       fitResult,
       recordAnswers,
       recordTitle,
       submittedRecord,
     }),
-    [fitResult, lcData, previewFrameIndex, recordAnswers, recordTitle, submittedRecord],
+    [fitResult, mergedCurve, previewFrameIndex, recordAnswers, recordTitle, singleSiteCurve, submittedRecord],
   );
   const workflowAvailability = useMemo<KmtnetStepAvailability>(
     () => workflowDefinition.getAvailability(workflowSnapshot),
@@ -533,7 +643,8 @@ export function KmtnetLab({
     },
     applyRestoredSnapshot: (saved) => {
       setPreviewFrameIndex(saved?.previewFrameIndex ?? null);
-      setLcData(saved?.lightCurve ?? null);
+      setSingleSiteCurve(saved?.singleSiteCurve ?? null);
+      setMergedCurve(saved?.mergedCurve ?? null);
       setFitResult(saved?.fitResult ?? null);
       setRecordAnswers(
         Object.keys(saved?.recordAnswers ?? {}).length > 0
@@ -543,7 +654,8 @@ export function KmtnetLab({
       setRecordTitle(saved?.recordTitle ?? '');
       setSubmittedRecord(saved?.submittedRecord ?? null);
       setError(null);
-      setLightCurveLoading(false);
+      setSingleSiteLoading(false);
+      setMergedLoading(false);
     },
   });
 
@@ -564,7 +676,7 @@ export function KmtnetLab({
 
   useEffect(() => {
     if (!workflowHydrated || seedRecordId === null || loadedSeedRecordIdRef.current === seedRecordId) return;
-    if (lcData || fitResult || submittedRecord) return;
+    if (singleSiteCurve || mergedCurve || fitResult || submittedRecord) return;
     let cancelled = false;
     void fetchMyRecordSubmission(seedRecordId)
       .then((record) => {
@@ -572,13 +684,20 @@ export function KmtnetLab({
       const payload = record.payload as {
           context?: {
             light_curve?: MicrolensingLightCurveResponse | null;
+            single_site_curve?: MicrolensingLightCurveResponse | null;
+            merged_curve?: MicrolensingLightCurveResponse | null;
             microlensing_fit?: MicrolensingFitResponse | null;
             preview_frame_index?: number | null;
           };
           answers?: Record<string, unknown>;
         };
-        if (payload.context?.light_curve) {
-          setLcData(payload.context.light_curve);
+        if (payload.context?.single_site_curve) {
+          setSingleSiteCurve(payload.context.single_site_curve);
+        }
+        if (payload.context?.merged_curve) {
+          setMergedCurve(payload.context.merged_curve);
+        } else if (payload.context?.light_curve) {
+          setMergedCurve(payload.context.light_curve);
         }
         if (payload.context?.microlensing_fit) {
           setFitResult(payload.context.microlensing_fit);
@@ -599,11 +718,11 @@ export function KmtnetLab({
     return () => {
       cancelled = true;
     };
-  }, [fitResult, lcData, seedRecordId, submittedRecord, target.id, workflowHydrated]);
+  }, [fitResult, mergedCurve, seedRecordId, singleSiteCurve, submittedRecord, target.id, workflowHydrated]);
 
   const singlePts = useMemo(
-    () => lcData?.points.filter((point) => point.site === siteId) ?? [],
-    [lcData, siteId],
+    () => singleSiteCurve?.points.filter((point) => point.site === siteId) ?? [],
+    [singleSiteCurve, siteId],
   );
 
   const observationCountsBySite = useMemo(() => {
@@ -692,36 +811,45 @@ export function KmtnetLab({
   }, [preview, siteId, target.id, workflowHydrated]);
 
   useEffect(() => {
-    const needsLightCurve = step === 'lightcurve' || step === 'fit' || step === 'record';
-    if (!workflowHydrated || !needsLightCurve || lcData || lightCurveLoading) return;
-    let cancelled = false;
-    setLightCurveLoading(true);
+    setSingleSiteCurve((current) =>
+      current && current.points.every((point) => point.site === siteId) ? current : null,
+    );
+  }, [siteId]);
+
+  const handleGenerateSingleSiteCurve = async () => {
+    setSingleSiteLoading(true);
     setError(null);
-    void fetchMicrolensingLightcurve(target.id)
-      .then((data) => {
-        if (cancelled) return;
-        setLcData(data);
-      })
-      .catch((loadError) => {
-        if (cancelled) return;
-        setError(loadError instanceof Error ? loadError.message : '실제 KMT light curve를 불러오지 못했습니다.');
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLightCurveLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [lcData, lightCurveLoading, step, target.id, workflowHydrated]);
+    setFitResult(null);
+    try {
+      const data = await fetchMicrolensingLightcurve(target.id, siteId);
+      setSingleSiteCurve(data);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '선택한 관측소 곡선을 불러오지 못했습니다.');
+    } finally {
+      setSingleSiteLoading(false);
+    }
+  };
+
+  const handleGenerateMergedCurve = async () => {
+    setMergedLoading(true);
+    setError(null);
+    setFitResult(null);
+    try {
+      const data = await fetchMicrolensingLightcurve(target.id);
+      setMergedCurve(data);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'KMT network 곡선을 불러오지 못했습니다.');
+    } finally {
+      setMergedLoading(false);
+    }
+  };
 
   const handleFit = async () => {
-    if (!lcData) return;
+    if (!mergedCurve) return;
     setFitting(true);
     setError(null);
     try {
-      const pts = lcData.points;
+      const pts = mergedCurve.points;
       const result = await fitMicrolensingModel({
         target_id: target.id,
         points: pts.map((p) => ({ hjd: p.hjd, magnitude: p.magnitude, mag_error: p.mag_error })),
@@ -768,7 +896,8 @@ export function KmtnetLab({
       )}
       <StepBar
         current={step}
-        hasLightCurve={workflowAvailability.hasLightCurve}
+        hasSingleSiteCurve={workflowAvailability.hasSingleSiteCurve}
+        hasMergedCurve={workflowAvailability.hasMergedCurve}
         hasFitResult={workflowAvailability.hasFitResult}
       />
 
@@ -834,6 +963,39 @@ export function KmtnetLab({
           <StepGuide questions={KMT_GUIDES.field} storageKey="easwa_kmt_guide_field" />
 
           <div className="ml-step-nav">
+            <button className="btn-primary" onClick={() => goTo('align')}>
+              다음: Frame 정렬 보기 →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 2: Align ── */}
+      {step === 'align' && (
+        <div className="ml-step-content">
+          <div className="ml-step-header">
+            <span className="ml-step-chip">Step 2</span>
+            <h3>Reference 기준 프레임 정렬</h3>
+            <p>
+              선택한 frame을 기준 frame에 맞춰 픽셀 단위로 이동시켜, 차분 전에 별상이 최대한 겹치도록 맞춥니다.
+            </p>
+          </div>
+
+          {preview && (
+            <AlignmentPanel
+              preview={preview}
+              frameChangeDisabled={previewLoading}
+              frameLoading={previewLoading}
+              onFrameChange={setPreviewFrameIndex}
+            />
+          )}
+          {previewLoading && !preview && <p className="hint">KMT 정렬 preview를 생성하는 중...</p>}
+          {previewError && <p className="error-message">{previewError}</p>}
+
+          <StepGuide questions={KMT_GUIDES.align} storageKey="easwa_kmt_guide_align" />
+
+          <div className="ml-step-nav">
+            <button className="btn-secondary" onClick={() => goTo('field')}>← 이전</button>
             <button className="btn-primary" onClick={() => goTo('difference')}>
               다음: Difference image 보기 →
             </button>
@@ -841,11 +1003,11 @@ export function KmtnetLab({
         </div>
       )}
 
-      {/* ── Step 2: Difference ── */}
+      {/* ── Step 3: Difference ── */}
       {step === 'difference' && (
         <div className="ml-step-content">
           <div className="ml-step-header">
-            <span className="ml-step-chip">Step 2</span>
+            <span className="ml-step-chip">Step 3</span>
             <h3>Difference image 해석</h3>
             <p>
               기준 frame과 현재 frame을 비교해, 실제로 밝기가 변한 위치만 남기는 KMT식 차분영상을 확인합니다.
@@ -866,40 +1028,136 @@ export function KmtnetLab({
           <StepGuide questions={KMT_GUIDES.difference} storageKey="easwa_kmt_guide_difference" />
 
           <div className="ml-step-nav">
-            <button className="btn-secondary" onClick={() => goTo('field')}>← 이전</button>
-            <button className="btn-primary" onClick={() => goTo('lightcurve')}>
-              다음: Light curve 비교 →
+            <button className="btn-secondary" onClick={() => goTo('align')}>← 이전</button>
+            <button className="btn-primary" onClick={() => goTo('extract')}>
+              다음: Single-site 추출 →
             </button>
           </div>
         </div>
       )}
 
-      {/* ── Step 3: Light Curve ── */}
-      {step === 'lightcurve' && (
+      {/* ── Step 4: Extract ── */}
+      {step === 'extract' && (
         <div className="ml-step-content">
           <div className="ml-step-header">
-            <span className="ml-step-chip">Step 3</span>
-            <h3>Single-site와 network curve 비교</h3>
+            <span className="ml-step-chip">Step 4</span>
+            <h3>{siteLabel} single-site curve 추출</h3>
             <p>
-              실제 KASI FITS cutout에서 추출한 sampled curve를 이용해, 선택한 관측소 하나와 3개 관측소를 합친 곡선을 비교합니다.
+              선택한 관측소의 sampled 실제 FITS cutout만 사용해, 단일 관측소 곡선을 먼저 생성합니다.
             </p>
           </div>
 
-          {lightCurveLoading && (
+          {singleSiteLoading && (
             <div className="ml-lightcurve-card">
               <div className="ml-lightcurve-card-head">
-                <strong>실제 cutout에서 curve 추출 중</strong>
-                <span>site별 reference 선택과 차분 flux 계산을 수행하고 있습니다.</span>
+                <strong>{siteLabel} single-site curve 추출 중</strong>
+                <span>정렬 후 차분 flux를 이용해 선택한 관측소 곡선을 계산하고 있습니다.</span>
               </div>
               <p className="hint">KMTNet 원본 FITS를 내려받아 sampled 실제 광도곡선을 만들고 있습니다.</p>
             </div>
           )}
 
-          {!lightCurveLoading && error && !lcData && (
+          {!singleSiteLoading && error && !singleSiteCurve && (
             <p className="error-message">{error}</p>
           )}
 
-          {lcData && (
+          {!singleSiteCurve && !singleSiteLoading && (
+            <div className="ml-lightcurve-card">
+              <div className="ml-lightcurve-card-head">
+                <strong>single-site extraction</strong>
+                <span>먼저 선택한 관측소의 곡선을 생성합니다.</span>
+              </div>
+              <p className="hint">
+                이 단계에서는 <strong>{siteLabel}</strong>의 실제 cutout만 사용합니다. network merge는 다음 단계에서 따로 실행합니다.
+              </p>
+              <div className="ml-step-nav" style={{ marginTop: 12 }}>
+                <button className="btn-primary" onClick={() => void handleGenerateSingleSiteCurve()}>
+                  {siteLabel} curve 생성
+                </button>
+              </div>
+            </div>
+          )}
+
+          {singleSiteCurve && (
+            <>
+              <div className="ml-network-legend">
+                <div className="ml-network-legend-item">
+                  <span className="ml-legend-dot" style={{ background: SITE_COLORS[siteId] }} />
+                  <span>{siteLabel}</span>
+                  <span className="ml-legend-pts">{singlePts.length}개</span>
+                </div>
+              </div>
+
+              <div className="ml-lightcurve-card">
+                <div className="ml-lightcurve-card-head">
+                  <strong>Single-site curve</strong>
+                  <span>{siteLabel} cutout에서 추출한 실제 sampled 곡선</span>
+                </div>
+                <PlotPanel
+                  lcData={singleSiteCurve}
+                  showSites={[siteId]}
+                  targetName={`${target.name} — ${siteId.toUpperCase()}`}
+                />
+              </div>
+            </>
+          )}
+
+          <StepGuide questions={KMT_GUIDES.extract} storageKey="easwa_kmt_guide_extract" />
+
+          <div className="ml-step-nav">
+            <button className="btn-secondary" onClick={() => goTo('difference')}>← 이전</button>
+            <button className="btn-primary" onClick={() => goTo('merge')} disabled={!singleSiteCurve || singleSiteLoading}>
+              다음: Network merge →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 5: Merge ── */}
+      {step === 'merge' && (
+        <div className="ml-step-content">
+          <div className="ml-step-header">
+            <span className="ml-step-chip">Step 5</span>
+            <h3>3개 관측소 network curve 병합</h3>
+            <p>
+              CTIO · SAAO · SSO의 sampled 실제 cutout을 합쳐, 피크와 공백 구간이 어떻게 달라지는지 비교합니다.
+            </p>
+          </div>
+
+          {!singleSiteCurve && (
+            <p className="hint">Step 4에서 선택한 관측소의 곡선을 먼저 생성해야 합니다.</p>
+          )}
+
+          {mergedLoading && (
+            <div className="ml-lightcurve-card">
+              <div className="ml-lightcurve-card-head">
+                <strong>KMT network curve 생성 중</strong>
+                <span>CTIO · SAAO · SSO를 순서대로 불러와 병합하고 있습니다.</span>
+              </div>
+              <p className="hint">network merge는 single-site보다 시간이 더 걸릴 수 있습니다.</p>
+            </div>
+          )}
+
+          {!mergedCurve && singleSiteCurve && !mergedLoading && (
+            <div className="ml-lightcurve-card">
+              <div className="ml-lightcurve-card-head">
+                <strong>network merge</strong>
+                <span>이 단계에서 세 관측소의 곡선을 합칩니다.</span>
+              </div>
+              <p className="hint">
+                먼저 만든 <strong>{siteLabel}</strong> 곡선은 유지되고, 여기서 전체 KMTNet 네트워크 곡선을 추가로 생성합니다.
+              </p>
+              <div className="ml-step-nav" style={{ marginTop: 12 }}>
+                <button className="btn-primary" onClick={() => void handleGenerateMergedCurve()}>
+                  Network curve 생성
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && <p className="error-message">{error}</p>}
+
+          {singleSiteCurve && mergedCurve && (
             <>
               <div className="ml-network-legend">
                 <div className="ml-network-legend-item">
@@ -911,7 +1169,7 @@ export function KmtnetLab({
                   <div key={s} className="ml-network-legend-item">
                     <span className="ml-legend-dot" style={{ background: SITE_COLORS[s] }} />
                     <span>{SITE_LABELS[s]}</span>
-                    <span className="ml-legend-pts">{lcData.points.filter((p) => p.site === s).length}개</span>
+                    <span className="ml-legend-pts">{mergedCurve.points.filter((p) => p.site === s).length}개</span>
                   </div>
                 ))}
               </div>
@@ -920,10 +1178,10 @@ export function KmtnetLab({
                 <div className="ml-lightcurve-card">
                   <div className="ml-lightcurve-card-head">
                     <strong>Single-site curve</strong>
-                    <span>{siteLabel} cutout에서 추출한 실제 sampled 곡선</span>
+                    <span>{siteLabel} sampled curve</span>
                   </div>
                   <PlotPanel
-                    lcData={lcData}
+                    lcData={singleSiteCurve}
                     showSites={[siteId]}
                     targetName={`${target.name} — ${siteId.toUpperCase()}`}
                   />
@@ -934,7 +1192,7 @@ export function KmtnetLab({
                     <span>CTIO · SAAO · SSO 실제 cutout을 모두 합친 곡선</span>
                   </div>
                   <PlotPanel
-                    lcData={lcData}
+                    lcData={mergedCurve}
                     showSites={ALL_SITES}
                     targetName={`${target.name} — KMTNet`}
                   />
@@ -943,22 +1201,22 @@ export function KmtnetLab({
             </>
           )}
 
-          <StepGuide questions={KMT_GUIDES.lightcurve} storageKey="easwa_kmt_guide_lightcurve" />
+          <StepGuide questions={KMT_GUIDES.merge} storageKey="easwa_kmt_guide_merge" />
 
           <div className="ml-step-nav">
-            <button className="btn-secondary" onClick={() => goTo('difference')}>← 이전</button>
-            <button className="btn-primary" onClick={() => goTo('fit')} disabled={!lcData || lightCurveLoading}>
+            <button className="btn-secondary" onClick={() => goTo('extract')}>← 이전</button>
+            <button className="btn-primary" onClick={() => goTo('fit')} disabled={!mergedCurve || mergedLoading}>
               다음: Paczyński 모델 적합 →
             </button>
           </div>
         </div>
       )}
 
-      {/* ── Step 4: Fit ── */}
+      {/* ── Step 6: Fit ── */}
       {step === 'fit' && (
         <div className="ml-step-content">
           <div className="ml-step-header">
-            <span className="ml-step-chip">Step 4</span>
+            <span className="ml-step-chip">Step 6</span>
             <h3>Paczyński 모델 적합과 해석</h3>
             <p>광도곡선에 단일 렌즈 모델을 맞추고, 얻어진 파라미터가 무엇을 의미하는지 해석합니다.</p>
           </div>
@@ -978,20 +1236,20 @@ export function KmtnetLab({
             </div>
           </div>
 
-          {lcData ? (
+          {mergedCurve ? (
             <PlotPanel
-              lcData={lcData}
+              lcData={mergedCurve}
               showSites={ALL_SITES}
               fitResult={fitResult}
               targetName={target.name}
             />
           ) : (
-            <p className="hint">Step 3에서 실제 cutout 기반 광도곡선을 먼저 추출해야 적합을 실행할 수 있습니다.</p>
+            <p className="hint">Step 5에서 network-merged curve를 먼저 생성해야 적합을 실행할 수 있습니다.</p>
           )}
 
           <div className="ml-fit-controls">
             {!fitResult ? (
-              <button className="btn-primary" onClick={handleFit} disabled={fitting || !lcData}>
+              <button className="btn-primary" onClick={handleFit} disabled={fitting || !mergedCurve}>
                 {fitting ? '적합 실행 중...' : 'Paczyński 모델 적합 실행'}
               </button>
             ) : (
@@ -1104,7 +1362,7 @@ export function KmtnetLab({
           </div>
 
           <div className="ml-step-nav">
-            <button className="btn-secondary" onClick={() => goTo('lightcurve')}>← 이전</button>
+            <button className="btn-secondary" onClick={() => goTo('merge')}>← 이전</button>
             {fitResult && (
               <button className="btn-primary" onClick={() => goTo('record')}>
                 다음: 결과 저장 →
@@ -1117,7 +1375,7 @@ export function KmtnetLab({
       {step === 'record' && fitResult && (
         <div className="ml-step-content">
           <div className="ml-step-header">
-            <span className="ml-step-chip">Step 5</span>
+            <span className="ml-step-chip">Step 7</span>
             <h3>결과 저장</h3>
             <p>
               이 해석 결과를 Google 로그인 계정의 분석 보관함에 저장합니다.
@@ -1262,8 +1520,10 @@ export function KmtnetLab({
                       target_name: target.name,
                       site_id: siteId,
                       site_label: siteLabel,
-                      frame_count: lcData?.points.length ?? 0,
-                      light_curve: lcData,
+                      frame_count: mergedCurve?.points.length ?? 0,
+                      light_curve: mergedCurve,
+                      single_site_curve: singleSiteCurve,
+                      merged_curve: mergedCurve,
                       microlensing_fit: fitResult,
                       preview_frame_index: previewFrameIndex,
                       target_type: target.type,

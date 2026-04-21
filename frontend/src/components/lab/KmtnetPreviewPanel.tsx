@@ -11,7 +11,8 @@ interface PreviewCardProps {
   title: string;
   caption: string;
   imageUrl: string;
-  preview: MicrolensingPreviewResponse;
+  preview: Pick<MicrolensingPreviewResponse, 'cutout_width_px' | 'cutout_height_px'>;
+  markerPosition: MicrolensingPreviewResponse['target_position'];
   accentClass?: string;
 }
 
@@ -20,10 +21,11 @@ function PreviewCard({
   caption,
   imageUrl,
   preview,
+  markerPosition,
   accentClass = '',
 }: PreviewCardProps) {
-  const left = `${(preview.target_position.x / preview.cutout_width_px) * 100}%`;
-  const top = `${(preview.target_position.y / preview.cutout_height_px) * 100}%`;
+  const left = `${(markerPosition.x / preview.cutout_width_px) * 100}%`;
+  const top = `${(markerPosition.y / preview.cutout_height_px) * 100}%`;
 
   return (
     <article className={`ml-preview-card ${accentClass}`.trim()}>
@@ -116,22 +118,25 @@ export function KmtnetPreviewPanel({
 
       <div className="ml-preview-grid">
         <PreviewCard
-          title="Raw Frame"
-          caption="선택한 시점의 crowded field"
-          imageUrl={preview.raw_image_data_url}
+          title="Aligned Frame"
+          caption={`reference 대비 Δx ${preview.registration_dx_px >= 0 ? '+' : ''}${preview.registration_dx_px.toFixed(2)} px · Δy ${preview.registration_dy_px >= 0 ? '+' : ''}${preview.registration_dy_px.toFixed(2)} px`}
+          imageUrl={preview.aligned_image_data_url}
           preview={preview}
+          markerPosition={preview.aligned_target_position}
         />
         <PreviewCard
           title="Reference"
           caption={`기준 프레임 #${preview.reference_frame_index + 1}`}
           imageUrl={preview.reference_image_data_url}
           preview={preview}
+          markerPosition={preview.reference_target_position}
         />
         <PreviewCard
           title="Difference"
           caption="밝은 잔차만 남긴 차분영상"
           imageUrl={preview.difference_image_data_url}
           preview={preview}
+          markerPosition={preview.aligned_target_position}
           accentClass="ml-preview-card--difference"
         />
       </div>
@@ -143,7 +148,7 @@ export function KmtnetPreviewPanel({
           현재 메타데이터는 <strong>{frameMetadata.filter_band ?? 'I'}-band</strong>, <strong>{frameMetadata.exposure_sec?.toFixed(0) ?? '120'} s</strong> 입니다.
         </span>
         <span>
-          차분영상에서는 변하지 않는 별이 대부분 사라지고, 기준영상보다 밝아진 위치만 강하게 남습니다.
+          차분영상에서는 정렬된 현재 프레임과 reference를 비교하므로, 변하지 않는 별이 대부분 사라지고 기준영상보다 밝아진 위치만 강하게 남습니다.
           {frameLoading ? ' 새 프레임을 불러오는 중입니다…' : ''}
         </span>
       </div>

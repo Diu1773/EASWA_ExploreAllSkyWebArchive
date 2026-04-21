@@ -76,11 +76,17 @@ export interface MicrolensingPreviewResponse {
   preview_width_px: number;
   preview_height_px: number;
   target_position: MicrolensingPixelCoordinate;
+  raw_target_position: MicrolensingPixelCoordinate;
+  aligned_target_position: MicrolensingPixelCoordinate;
+  reference_target_position: MicrolensingPixelCoordinate;
   reference_frame_index: number;
   reference_observation_id: string;
   reference_hjd: number;
+  registration_dx_px: number;
+  registration_dy_px: number;
   frame_metadata: MicrolensingPreviewFrameMetadata;
   raw_image_data_url: string;
+  aligned_image_data_url: string;
   reference_image_data_url: string;
   difference_image_data_url: string;
 }
