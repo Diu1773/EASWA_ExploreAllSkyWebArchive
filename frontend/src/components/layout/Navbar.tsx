@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { buildExplorerHref } from '../../utils/explorerNavigation';
 
 function LogoIcon() {
   return (
@@ -27,6 +28,20 @@ function LogoIcon() {
 
 export function Navbar() {
   const location = useLocation();
+  const moduleParam = new URLSearchParams(location.search).get('module');
+  const isKmtnetContext =
+    location.pathname.startsWith('/kmtnet') ||
+    moduleParam === 'kmtnet';
+  const isExplorerContext =
+    (location.pathname === '/explorer' ||
+      location.pathname.startsWith('/target') ||
+      location.pathname.startsWith('/lab')) &&
+    !isKmtnetContext;
+  const defaultExplorerHref = buildExplorerHref({
+    moduleId: 'tess',
+    topicId: 'exoplanet_transit',
+    siteId: null,
+  });
   const user = useAuthStore((s) => s.user);
   const loading = useAuthStore((s) => s.loading);
   const logout = useAuthStore((s) => s.logout);
@@ -61,7 +76,25 @@ export function Navbar() {
       </Link>
       <div className="navbar-links">
         <Link to="/" className={location.pathname === '/' ? 'active' : ''}>
-          Sky Explorer
+          Home
+        </Link>
+        <Link
+          to={defaultExplorerHref}
+          className={isExplorerContext ? 'active' : ''}
+        >
+          Explorer
+        </Link>
+        <Link
+          to="/tess"
+          className={location.pathname.startsWith('/tess') ? 'active' : ''}
+        >
+          TESS
+        </Link>
+        <Link
+          to="/kmtnet"
+          className={isKmtnetContext ? 'active' : ''}
+        >
+          KMTNet
         </Link>
       </div>
       <div className="navbar-auth" ref={menuRef}>

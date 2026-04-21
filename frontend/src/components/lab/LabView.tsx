@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { runPhotometry, buildLightCurve } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
@@ -10,15 +10,23 @@ import { ParamsPanel } from './ParamsPanel';
 import { PhotometryResult } from './PhotometryResult';
 import { LightCurvePlot } from './LightCurvePlot';
 import { TransitLab } from './TransitLab';
+import { KmtnetLab } from './KmtnetLab';
 import type {
   PhotometryMeasurement,
   LightCurveResponse,
 } from '../../types/photometry';
 import { buildDssPreviewUrl } from '../../utils/surveys';
+import {
+  alignExplorerContext,
+  buildExplorerContextSearchParams,
+  buildTargetHref,
+  getExplorerContext,
+} from '../../utils/explorerNavigation';
 
 // Map topic_id → workflow identifier
 const TOPIC_WORKFLOW: Record<string, string> = {
   exoplanet_transit: 'transit',
+  microlensing: 'microlensing',
 };
 
 export function LabView() {
@@ -42,25 +50,43 @@ export function LabView() {
   const workflowParam = searchParams.get('workflow');
   const topicWorkflow = target?.topic_id ? (TOPIC_WORKFLOW[target.topic_id] ?? null) : null;
   const resolvedWorkflow = workflowParam ?? topicWorkflow;
+  const navigationContext = useMemo(() => {
+    const ctx = getExplorerContext(searchParams, { topicId: target?.topic_id ?? null });
+    return target === null ? ctx : alignExplorerContext(ctx, target.topic_id);
+  }, [searchParams, target]);
 
-  // Stamp ?workflow= into URL once we know it (replace — no history entry).
   useEffect(() => {
-    if (!resolvedWorkflow || workflowParam === resolvedWorkflow) return;
+    if (!target || !resolvedWorkflow) return;
     const next = new URLSearchParams(searchParams);
-    next.set('workflow', resolvedWorkflow);
-    setSearchParams(next, { replace: true });
-  }, [resolvedWorkflow, workflowParam, searchParams, setSearchParams]);
+    next.delete('module');
+    next.delete('topic');
+    next.delete('site');
+    next.delete('workflow');
+
+    const canonical = buildExplorerContextSearchParams(
+      navigationContext,
+      [['workflow', resolvedWorkflow]]
+    );
+    canonical.forEach((value, key) => {
+      next.set(key, value);
+    });
+
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [navigationContext, resolvedWorkflow, searchParams, setSearchParams, target]);
 
   const isTransitWorkflow = resolvedWorkflow === 'transit';
+  const isMicrolensingWorkflow = resolvedWorkflow === 'microlensing';
 
   const {
     draftId: parsedDraftId,
     seedRecordId: parsedSeedRecordId,
     draftRestoreReady,
   } = useWorkflowDraftRoute({
-    workflowId: 'transit_lab',
+    workflowId: isMicrolensingWorkflow ? 'kmtnet_lab' : 'transit_lab',
     subjectId: targetId,
-    enableDrafts: isTransitWorkflow,
+    enableDrafts: isTransitWorkflow || isMicrolensingWorkflow,
     userPresent: Boolean(user),
     onError: setErrorMessage,
   });
@@ -135,6 +161,52 @@ export function LabView() {
     return <div className="loading">Loading...</div>;
   }
 
+  const targetHref = buildTargetHref(targetId ?? target.id, {
+    ...navigationContext,
+    topicId: target.topic_id,
+  });
+
+  if (isMicrolensingWorkflow) {
+    if (!draftRestoreReady) {
+      return <div className="loading">Restoring draft...</div>;
+    }
+    return (
+      <div className="lab-view">
+        <div className="lab-header">
+          <div className="lab-header-main">
+            <Link to={targetHref} className="back-link">
+              &larr; Back to Target
+            </Link>
+            <div className="lab-header-copy">
+              <h2>Microlensing Lab: {target.name}</h2>
+              <div className="target-meta">
+                <span className="badge">{target.type}</span>
+                <span>{target.constellation}</span>
+                <span>KMTNet</span>
+              </div>
+            </div>
+          </div>
+          <img
+            src={buildDssPreviewUrl(target.ra, target.dec, { width: 360, height: 220, fovDeg: 0.22 })}
+            alt={`${target.name} survey preview`}
+            className="lab-header-preview"
+          />
+        </div>
+        <div className="lab-content">
+          <div className="lab-results kmtnet-results">
+            <KmtnetLab
+              target={target}
+              observations={observations}
+              siteId={navigationContext.siteId ?? 'ctio'}
+              draftId={parsedDraftId}
+              seedRecordId={parsedSeedRecordId}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isTransitWorkflow) {
     if (!draftRestoreReady) {
       return <div className="loading">Restoring draft...</div>;
@@ -143,7 +215,7 @@ export function LabView() {
       <div className="lab-view">
         <div className="lab-header">
           <div className="lab-header-main">
-            <Link to={`/target/${targetId}`} className="back-link">
+            <Link to={targetHref} className="back-link">
               &larr; Back to Target
             </Link>
             <div className="lab-header-copy">
@@ -175,7 +247,7 @@ export function LabView() {
     <div className="lab-view">
       <div className="lab-header">
         <div className="lab-header-main">
-          <Link to={`/target/${targetId}`} className="back-link">
+          <Link to={targetHref} className="back-link">
             &larr; Back to Target
           </Link>
           <div className="lab-header-copy">

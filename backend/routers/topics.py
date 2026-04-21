@@ -32,6 +32,15 @@ TOPICS = [
         preview_label="ESA / Hubble",
         preview_image_url="https://cdn.esahubble.org/archives/images/screen/heic0612b.jpg",
     ),
+    Topic(
+        id="microlensing",
+        name="미시중력렌즈 탐구 (Microlensing)",
+        description="KMTNet 3개 관측소의 연속 감시 자료로 은하 벌지 미시중력렌즈 이벤트를 분석합니다.",
+        icon="🌌",
+        target_count=40,
+        preview_label="NASA / ESA",
+        preview_image_url="https://cdn.esahubble.org/archives/images/screen/heic1323a.jpg",
+    ),
 ]
 
 

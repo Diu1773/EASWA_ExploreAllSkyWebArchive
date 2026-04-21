@@ -129,6 +129,13 @@ TRANSIT_CUTOUT_STAGE_DIR = os.getenv(
     "",
 ).strip()
 RECORD_REQUIRE_LOGIN = _parse_bool("EASWA_RECORD_REQUIRE_LOGIN", True)
+ADMIN_EMAILS: frozenset[str] = frozenset(
+    email for email in (
+        item.strip().lower()
+        for item in os.getenv("EASWA_ADMIN_EMAILS", "").split(",")
+    )
+    if email
+)
 RECORD_SUBMISSION_LIMIT = _parse_int("EASWA_RECORD_SUBMISSION_LIMIT", 10)
 RECORD_MAX_CONTEXT_BYTES = _parse_int("EASWA_RECORD_MAX_CONTEXT_BYTES", 32 * 1024)
 RECORD_MAX_ANSWERS_BYTES = _parse_int("EASWA_RECORD_MAX_ANSWERS_BYTES", 32 * 1024)

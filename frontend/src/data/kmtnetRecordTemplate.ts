@@ -1,0 +1,93 @@
+import type { RecordTemplate } from '../types/record';
+
+export const defaultKmtnetRecordTemplate: RecordTemplate = {
+  id: 'kmtnet_record',
+  workflow: 'kmtnet_lab',
+  title: 'KMTNet Microlensing Analysis Record',
+  description:
+    'Save a short interpretation of the microlensing event, the site coverage you inspected, and how well the Paczynski fit described the data.',
+  version: 1,
+  questions: [
+    {
+      id: 'summary_title',
+      label: 'Record Title',
+      type: 'text',
+      required: true,
+      placeholder: 'Example: KMT-2022-BLG-0440 single-lens interpretation',
+      options: [],
+    },
+    {
+      id: 'event_classification',
+      label: 'How would you classify this event?',
+      type: 'radio',
+      required: true,
+      options: [
+        { value: 'single_lens', label: 'Single-lens like' },
+        { value: 'high_mag', label: 'High-magnification' },
+        { value: 'planetary_hint', label: 'Possible planetary anomaly' },
+        { value: 'unclear', label: 'Unclear / needs more review' },
+      ],
+    },
+    {
+      id: 'fit_quality',
+      label: 'How well did the Paczynski fit match the curve?',
+      type: 'select',
+      required: true,
+      options: [
+        { value: 'high', label: 'High agreement' },
+        { value: 'medium', label: 'Reasonable with caveats' },
+        { value: 'low', label: 'Poor agreement' },
+      ],
+    },
+    {
+      id: 'coverage_assessment',
+      label: 'How useful was the site coverage?',
+      type: 'select',
+      required: true,
+      options: [
+        { value: 'single_site_ok', label: 'Single site already informative' },
+        { value: 'network_needed', label: '3-site merge was important' },
+        { value: 'still_incomplete', label: 'Coverage still felt incomplete' },
+      ],
+    },
+    {
+      id: 'confidence_score',
+      label: 'Confidence Score (1-5)',
+      type: 'number',
+      required: true,
+      min_value: 1,
+      max_value: 5,
+      help_text: 'A quick self-rating for how confident you are in this microlensing interpretation.',
+      options: [],
+    },
+    {
+      id: 'issues_observed',
+      label: 'What issues did you notice?',
+      type: 'checkbox',
+      options: [
+        { value: 'coverage_gap', label: 'Coverage gap between sites' },
+        { value: 'noisy_points', label: 'Noisy light-curve points' },
+        { value: 'fit_mismatch', label: 'Fit and data disagree' },
+        { value: 'possible_anomaly', label: 'Possible anomaly / residual structure' },
+        { value: 'none', label: 'No major issues' },
+      ],
+    },
+    {
+      id: 'analysis_note',
+      label: 'Analysis Note',
+      type: 'textarea',
+      required: true,
+      placeholder:
+        'Summarize the site coverage, the event shape, the fit result, and what you think it means.',
+      options: [],
+    },
+    {
+      id: 'next_step',
+      label: 'If you continued this investigation, what would you do next?',
+      type: 'textarea',
+      placeholder:
+        'Example: inspect a difference-image sequence, compare sites again, or test a non-single-lens model.',
+      options: [],
+    },
+  ],
+};

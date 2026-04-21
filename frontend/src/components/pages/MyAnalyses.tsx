@@ -155,8 +155,8 @@ export function MyAnalyses() {
           </svg>
           <strong>No analyses yet</strong>
           <p>
-            Start in Transit Lab and submit the final record form. Submitted records
-            will show up here.
+            Start in Transit Lab or Microlensing Lab and submit the final record form.
+            Submitted records will show up here.
           </p>
         </div>
       )}
@@ -271,11 +271,15 @@ export function MyAnalyses() {
                   target_name?: string;
                   sector?: number;
                   frame_count?: number;
+                  site_label?: string;
                 };
                 answers?: {
                   transit_visible?: string;
                   curve_quality?: string;
                   confidence_score?: number;
+                  event_classification?: string;
+                  fit_quality?: string;
+                  coverage_assessment?: string;
                 };
               };
               const isDownloading =
@@ -284,6 +288,7 @@ export function MyAnalyses() {
               const isDeleting =
                 activeAction?.id === String(record.submission_id) &&
                 activeAction.type === 'delete-record';
+              const canDownloadCsv = record.workflow === 'transit_lab';
               return (
                 <article key={record.submission_id} className="analysis-record-card">
                   <div className="analysis-record-head">
@@ -300,6 +305,9 @@ export function MyAnalyses() {
                     {payload.context?.sector !== undefined && (
                       <span>Sector {payload.context.sector}</span>
                     )}
+                    {payload.context?.site_label && (
+                      <span>{payload.context.site_label}</span>
+                    )}
                     {payload.context?.frame_count !== undefined && (
                       <span>{payload.context.frame_count.toLocaleString()} frames</span>
                     )}
@@ -310,6 +318,15 @@ export function MyAnalyses() {
                     )}
                     {payload.answers?.curve_quality && (
                       <span>Quality: {payload.answers.curve_quality}</span>
+                    )}
+                    {payload.answers?.event_classification && (
+                      <span>Event: {payload.answers.event_classification}</span>
+                    )}
+                    {payload.answers?.fit_quality && (
+                      <span>Fit: {payload.answers.fit_quality}</span>
+                    )}
+                    {payload.answers?.coverage_assessment && (
+                      <span>Coverage: {payload.answers.coverage_assessment}</span>
                     )}
                     {payload.answers?.confidence_score !== undefined && (
                       <span>Confidence: {payload.answers.confidence_score}/5</span>
@@ -328,14 +345,16 @@ export function MyAnalyses() {
                     <Link to={`/target/${record.target_id}`} className="btn-sm">
                       View Target
                     </Link>
-                    <button
-                      type="button"
-                      className="btn-sm"
-                      disabled={isDownloading || isDeleting}
-                      onClick={() => handleDownloadCsv(record.submission_id)}
-                    >
-                      {isDownloading ? 'Downloading...' : 'Download CSV'}
-                    </button>
+                    {canDownloadCsv && (
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        disabled={isDownloading || isDeleting}
+                        onClick={() => handleDownloadCsv(record.submission_id)}
+                      >
+                        {isDownloading ? 'Downloading...' : 'Download CSV'}
+                      </button>
+                    )}
                     <button
                       type="button"
                     className="btn-sm analysis-record-delete-trigger"

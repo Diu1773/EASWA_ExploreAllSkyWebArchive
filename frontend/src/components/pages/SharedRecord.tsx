@@ -9,11 +9,19 @@ type RecordPayload = {
   context?: {
     target_name?: string;
     sector?: number;
+    site_label?: string;
     transit_fit?: {
       rp_rs?: number; rp_rs_err?: number;
       a_rs?: number; a_rs_err?: number;
       inclination?: number; inclination_err?: number;
       chi_squared_red?: number; period?: number; t0?: number;
+    };
+    microlensing_fit?: {
+      t0?: number;
+      u0?: number;
+      tE?: number;
+      mag_base?: number;
+      chi2_dof?: number;
     };
   };
   answers?: Record<string, unknown>;
@@ -53,6 +61,7 @@ export function SharedRecord() {
   const payload = (record?.payload ?? null) as RecordPayload | null;
   const context = payload?.context ?? null;
   const transitFit = context?.transit_fit ?? null;
+  const microlensingFit = context?.microlensing_fit ?? null;
   const answerEntries = Object.entries(payload?.answers ?? {});
   const questionMap = useMemo(
     () => new Map((template?.questions ?? []).map((q) => [q.id, q])),
@@ -96,6 +105,7 @@ export function SharedRecord() {
           <dl className="record-detail-metrics">
             <div><dt>Target</dt><dd>{context?.target_name ?? record.target_id}</dd></div>
             <div><dt>Sector</dt><dd>{context?.sector ?? '—'}</dd></div>
+            <div><dt>Site</dt><dd>{context?.site_label ?? '—'}</dd></div>
             <div><dt>Submitted</dt><dd>{record.created_at ? new Date(record.created_at + 'Z').toLocaleString() : '—'}</dd></div>
             <div><dt>Template</dt><dd>{payload?.template?.title ?? record.template_id}</dd></div>
           </dl>
@@ -111,6 +121,19 @@ export function SharedRecord() {
               <div><dt>χ² red</dt><dd>{formatMetric(transitFit.chi_squared_red, 3)}</dd></div>
               <div><dt>Period (d)</dt><dd>{formatMetric(transitFit.period, 6)}</dd></div>
               <div><dt>T0 (BJD)</dt><dd>{formatMetric(transitFit.t0, 6)}</dd></div>
+            </dl>
+          </div>
+        )}
+
+        {microlensingFit && (
+          <div className="record-detail-card">
+            <h3>Microlensing Fit</h3>
+            <dl className="record-detail-metrics">
+              <div><dt>t₀</dt><dd>{formatMetric(microlensingFit.t0, 4)}</dd></div>
+              <div><dt>u₀</dt><dd>{formatMetric(microlensingFit.u0, 5)}</dd></div>
+              <div><dt>tE (d)</dt><dd>{formatMetric(microlensingFit.tE, 3)}</dd></div>
+              <div><dt>Ibase</dt><dd>{formatMetric(microlensingFit.mag_base, 4)}</dd></div>
+              <div><dt>χ²/dof</dt><dd>{formatMetric(microlensingFit.chi2_dof, 3)}</dd></div>
             </dl>
           </div>
         )}

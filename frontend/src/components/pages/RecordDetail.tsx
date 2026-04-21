@@ -22,6 +22,9 @@ type RecordPayload = {
     observation_id?: string;
     field_size_px?: number;
     frame_count?: number;
+    site_id?: string;
+    site_label?: string;
+    target_type?: string;
     comparison_positions?: Array<unknown>;
     fit_controls?: {
       fit_data_source?: string;
@@ -107,11 +110,23 @@ export function RecordDetail() {
   const payload = (record?.payload ?? null) as RecordPayload | null;
   const context = payload?.context ?? null;
   const transitFit = context?.transit_fit ?? null;
+  const microlensingFit = (context as {
+    microlensing_fit?: {
+      t0?: number;
+      u0?: number;
+      tE?: number;
+      mag_base?: number;
+      chi2_dof?: number;
+    };
+  } | null)?.microlensing_fit ?? null;
   const answerEntries = Object.entries(payload?.answers ?? {});
   const questionMap = useMemo(
     () => new Map((template?.questions ?? []).map((question) => [question.id, question])),
     [template]
   );
+
+  const canDownloadCsv = record?.workflow === 'transit_lab';
+  const isMicrolensingRecord = record?.workflow === 'kmtnet_lab';
 
   const handleDownloadCsv = async () => {
     if (!record) return;
@@ -206,14 +221,16 @@ export function RecordDetail() {
             <Link to={`/target/${record.target_id}`} className="btn-sm">
               View Target
             </Link>
-            <button
-              type="button"
-              className="btn-sm"
-              disabled={downloading}
-              onClick={() => { void handleDownloadCsv(); }}
-            >
-              {downloading ? 'Downloading...' : 'Download CSV'}
-            </button>
+            {canDownloadCsv && (
+              <button
+                type="button"
+                className="btn-sm"
+                disabled={downloading}
+                onClick={() => { void handleDownloadCsv(); }}
+              >
+                {downloading ? 'Downloading...' : 'Download CSV'}
+              </button>
+            )}
             <button
               type="button"
               className={`btn-sm ${copiedLink ? 'btn-sm--success' : ''}`}
@@ -246,31 +263,40 @@ export function RecordDetail() {
               <span>{record.workflow}</span>
               <span>{context?.target_name ?? record.target_id}</span>
               {context?.sector !== undefined && <span>Sector {context.sector}</span>}
+              {context?.site_label && <span>{context.site_label}</span>}
               {record.observation_ids.length > 0 && (
                 <span>{record.observation_ids.length} observation</span>
               )}
               {context?.frame_count !== undefined && (
-                <span>{context.frame_count.toLocaleString()} cadences</span>
+                <span>
+                  {context.frame_count.toLocaleString()} {isMicrolensingRecord ? 'points' : 'cadences'}
+                </span>
               )}
             </div>
             <dl className="record-detail-metrics">
               <div>
-                <dt>Observation</dt>
-                <dd>{context?.observation_id ?? record.observation_ids[0] ?? '—'}</dd>
-              </div>
-              <div>
-                <dt>Field</dt>
+                <dt>{isMicrolensingRecord ? 'Site' : 'Observation'}</dt>
                 <dd>
-                  {context?.field_size_px !== undefined ? `${context.field_size_px} px` : '—'}
+                  {context?.site_label ?? context?.site_id ?? context?.observation_id ?? record.observation_ids[0] ?? '—'}
                 </dd>
               </div>
               <div>
-                <dt>Comparisons</dt>
-                <dd>{context?.comparison_positions?.length ?? 0}</dd>
+                <dt>{isMicrolensingRecord ? 'Target Type' : 'Field'}</dt>
+                <dd>
+                  {isMicrolensingRecord
+                    ? (context?.target_type ?? '—')
+                    : context?.field_size_px !== undefined
+                      ? `${context.field_size_px} px`
+                      : '—'}
+                </dd>
               </div>
               <div>
-                <dt>Fit Mode</dt>
-                <dd>{context?.fit_controls?.fit_data_source ?? '—'}</dd>
+                <dt>{isMicrolensingRecord ? 'Merged Sites' : 'Comparisons'}</dt>
+                <dd>{isMicrolensingRecord ? record.observation_ids.length : context?.comparison_positions?.length ?? 0}</dd>
+              </div>
+              <div>
+                <dt>{isMicrolensingRecord ? 'Fit Model' : 'Fit Mode'}</dt>
+                <dd>{isMicrolensingRecord ? 'Paczynski single-lens' : context?.fit_controls?.fit_data_source ?? '—'}</dd>
               </div>
             </dl>
           </section>
@@ -315,6 +341,34 @@ export function RecordDetail() {
             </section>
           )}
 
+          {microlensingFit && (
+            <section className="record-detail-card">
+              <h3>Microlensing Fit</h3>
+              <dl className="record-detail-metrics">
+                <div>
+                  <dt>t₀</dt>
+                  <dd>{formatMetric(microlensingFit.t0, 4)}</dd>
+                </div>
+                <div>
+                  <dt>u₀</dt>
+                  <dd>{formatMetric(microlensingFit.u0, 5)}</dd>
+                </div>
+                <div>
+                  <dt>tE</dt>
+                  <dd>{formatMetric(microlensingFit.tE, 3)} d</dd>
+                </div>
+                <div>
+                  <dt>Ibase</dt>
+                  <dd>{formatMetric(microlensingFit.mag_base, 4)}</dd>
+                </div>
+                <div>
+                  <dt>χ²/dof</dt>
+                  <dd>{formatMetric(microlensingFit.chi2_dof, 3)}</dd>
+                </div>
+              </dl>
+            </section>
+          )}
+
           <section className="record-detail-card">
             <h3>Survey Answers</h3>
             {answerEntries.length === 0 ? (
@@ -337,8 +391,9 @@ export function RecordDetail() {
           <section className="record-detail-card">
             <h3>Payload Notes</h3>
             <p className="hint">
-              This page shows the immutable submitted snapshot. Any new photometry, QC, ROI,
-              or fit changes should happen in a draft session created from this record.
+              This page shows the immutable submitted snapshot. Any new analysis settings,
+              measurements, previews, or fit changes should happen in a draft session created
+              from this record.
             </p>
             <div className="analysis-record-summary">
               {payload?.template?.version !== undefined && (

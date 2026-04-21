@@ -19,7 +19,7 @@ _TESSCUT_SECTOR_URL = "https://mast.stsci.edu/tesscut/api/v0.1/sector"
 _TESSCUT_ASTROCUT_URL = "https://mast.stsci.edu/tesscut/api/v0.1/astrocut"
 _DEFAULT_CUTOUT_SIZE_PX = 35
 _DEFAULT_MAX_TARGETS = 20
-_DEFAULT_MIN_DEPTH_PCT = 5.0
+_DEFAULT_MIN_DEPTH_PCT = 1.0
 _DEFAULT_MAX_PERIOD_DAYS = 5.0
 _DEFAULT_MAX_HOST_VMAG = 13.0
 

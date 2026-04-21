@@ -520,7 +520,10 @@ export function LightCurvePlot({
           )}
         </h4>
       )}
-      <div ref={plotRef} className="plot-canvas" />
+      <div
+        ref={plotRef}
+        className={`plot-canvas${variant === 'fit-preview' ? ' plot-canvas--fit-preview' : ''}`}
+      />
       {enableRangeSelection && !isFolded && (
         <p className="hint" style={{ marginTop: 8 }}>
           Drag horizontally on the plot to set the BJD fit window.

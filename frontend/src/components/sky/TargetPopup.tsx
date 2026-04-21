@@ -1,5 +1,9 @@
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import type { Target } from '../../types/target';
+import {
+  buildTargetHref,
+  getExplorerContext,
+} from '../../utils/explorerNavigation';
 
 function formatTargetSource(source?: string | null): string | null {
   if (!source) return null;
@@ -28,6 +32,10 @@ export function TargetPopup({
   onClose,
 }: TargetPopupProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const context = getExplorerContext(new URLSearchParams(location.search), {
+    topicId: target.topic_id,
+  });
   const sourceLabel = formatTargetSource(target.data_source);
 
   return (
@@ -71,7 +79,7 @@ export function TargetPopup({
         <button
           className="btn-secondary"
           disabled={!gotoUnlocked || gotoInProgress}
-          onClick={() => navigate(`/target/${target.id}`)}
+          onClick={() => navigate(buildTargetHref(target.id, context))}
         >
           View Details &amp; Observations
         </button>

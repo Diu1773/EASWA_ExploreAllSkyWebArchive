@@ -6,7 +6,6 @@ interface TransitCutoutViewerProps {
   displayCutoutSizePx?: number;
   stars: StarOverlay[];
   showTicMarkers?: boolean;
-  onToggleTicMarkers?: () => void;
   activeFrameIndex?: number | null;
   onFrameChange?: (frameIndex: number) => void;
   frameChangeDisabled?: boolean;
@@ -24,7 +23,6 @@ export function TransitCutoutViewer({
   displayCutoutSizePx,
   stars,
   showTicMarkers = false,
-  onToggleTicMarkers,
   activeFrameIndex,
   onFrameChange,
   frameChangeDisabled = false,
@@ -236,16 +234,6 @@ export function TransitCutoutViewer({
         )}
 
         <div className="transit-cutout-zoom">
-          {(preview.tic_stars?.length ?? 0) > 0 && onToggleTicMarkers && (
-            <button
-              type="button"
-              className={`btn-sm ${showTicMarkers ? 'active' : ''}`}
-              onClick={onToggleTicMarkers}
-              title="Toggle TIC star markers"
-            >
-              TIC
-            </button>
-          )}
           <button
             type="button"
             className="btn-sm"

@@ -13,6 +13,7 @@ export function ObservationTable({ observations }: ObservationTableProps) {
 
   const allSelected = observations.length > 0 && selected.length === observations.length;
   const isTessTable = observations.some((obs) => obs.mission === 'TESS');
+  const isKmtnetTable = observations.some((obs) => obs.mission === 'KMTNet');
 
   return (
     <div className="observation-table-wrap">
@@ -20,7 +21,7 @@ export function ObservationTable({ observations }: ObservationTableProps) {
         <div>
           <h4>Observations</h4>
           <p className="obs-table-subtitle">
-            {isTessTable ? 'TESS sectors and cutout products' : 'Archive observation records'}
+          {isTessTable ? 'TESS sectors and cutout products' : 'Archive observation records'}
           </p>
         </div>
         <div className="obs-table-actions">
@@ -48,6 +49,17 @@ export function ObservationTable({ observations }: ObservationTableProps) {
               <th>Band</th>
               <th>Frames</th>
               <th>Cutout</th>
+            </tr>
+          ) : isKmtnetTable ? (
+            <tr>
+              <th></th>
+              <th>Site</th>
+              <th>Epoch</th>
+              <th>HJD</th>
+              <th>Filter</th>
+              <th>Exp (s)</th>
+              <th>Preview</th>
+              <th>FITS</th>
             </tr>
           ) : (
             <tr>
@@ -96,6 +108,42 @@ export function ObservationTable({ observations }: ObservationTableProps) {
                       </a>
                     ) : (
                       'Pending'
+                    )}
+                  </td>
+                </>
+              ) : isKmtnetTable ? (
+                <>
+                  <td>{obs.display_label ?? '-'}</td>
+                  <td>{obs.epoch.includes('T') ? new Date(obs.epoch).toLocaleString() : obs.epoch}</td>
+                  <td>{obs.hjd.toFixed(5)}</td>
+                  <td>{obs.filter_band}</td>
+                  <td>{obs.exposure_sec}</td>
+                  <td>
+                    {obs.thumbnail_url ? (
+                      <a
+                        href={obs.thumbnail_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-link"
+                      >
+                        JPG
+                      </a>
+                    ) : (
+                      'n/a'
+                    )}
+                  </td>
+                  <td>
+                    {obs.cutout_url ? (
+                      <a
+                        href={obs.cutout_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-link"
+                      >
+                        FITS
+                      </a>
+                    ) : (
+                      'n/a'
                     )}
                   </td>
                 </>

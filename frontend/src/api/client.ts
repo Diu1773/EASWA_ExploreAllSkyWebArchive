@@ -28,6 +28,12 @@ import type {
   WorkflowDraftItem,
   WorkflowDraftRequest,
 } from '../types/record';
+import type {
+  MicrolensingLightCurveResponse,
+  MicrolensingFitRequest,
+  MicrolensingFitResponse,
+  MicrolensingPreviewResponse,
+} from '../types/microlensing';
 
 const BASE = '/api';
 
@@ -422,6 +428,50 @@ export async function fetchSharedRecord(token: string): Promise<RecordListItem |
   }
   const data = await res.json();
   return (data.records?.[0] as RecordListItem) ?? null;
+}
+
+export interface GuideStats {
+  total_records: number;
+  records_with_guide: number;
+  question_stats: Record<string, Record<string, number>>;
+}
+
+export async function fetchGuideStats(): Promise<GuideStats> {
+  return get('/records/admin/guide-stats');
+}
+
+// ===== KMTNet Microlensing =====
+
+export async function fetchMicrolensingLightcurve(
+  targetId: string,
+  site?: string | null,
+): Promise<MicrolensingLightCurveResponse> {
+  const params = new URLSearchParams();
+  if (site) params.set('site', site);
+  const query = params.size > 0 ? `?${params.toString()}` : '';
+  return get(`/kmtnet/lightcurve/${encodeURIComponent(targetId)}${query}`);
+}
+
+export async function fetchMicrolensingPreview(
+  targetId: string,
+  site: string,
+  frameIndex?: number | null,
+  sizePx = 64,
+): Promise<MicrolensingPreviewResponse> {
+  const params = new URLSearchParams({
+    site,
+    size_px: String(sizePx),
+  });
+  if (frameIndex !== undefined && frameIndex !== null) {
+    params.set('frame_index', String(frameIndex));
+  }
+  return get(`/kmtnet/preview/${encodeURIComponent(targetId)}?${params.toString()}`);
+}
+
+export async function fitMicrolensingModel(
+  req: MicrolensingFitRequest,
+): Promise<MicrolensingFitResponse> {
+  return post('/kmtnet/fit', req);
 }
 
 function extractFilename(

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchTopics } from '../../api/client';
 import { DEFAULT_TRANSIT_FILTERS, useAppStore } from '../../stores/useAppStore';
@@ -65,9 +65,19 @@ export function TopicSidebar() {
     return () => document.removeEventListener('mousedown', handle);
   }, [settingsOpen]);
 
-  const updateDraft = (patch: Partial<TransitTargetFilters>) => {
-    setDraftFilters((current) => ({ ...current, ...patch }));
-  };
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const updateDraft = useCallback((patch: Partial<TransitTargetFilters>) => {
+    setDraftFilters((current) => {
+      const next = { ...current, ...patch };
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        setTransitFilters(next);
+        setTopic('exoplanet_transit');
+      }, 800);
+      return next;
+    });
+  }, [setTransitFilters, setTopic]);
 
   return (
     <div className={`topic-bar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -151,8 +161,18 @@ export function TopicSidebar() {
               onChange={(e) => updateDraft({ maxHostVmag: Math.max(6, Math.min(16, Number(e.target.value) || 6)) })} />
           </label>
           <div className="topic-settings-actions">
-            <button className="btn-sm" onClick={() => setDraftFilters(DEFAULT_TRANSIT_FILTERS)}>Reset</button>
-            <button className="btn-sm" onClick={() => { setTransitFilters(draftFilters); setTopic('exoplanet_transit'); setSettingsOpen(false); }}>Apply</button>
+            <button className="btn-sm" onClick={() => {
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              setDraftFilters(DEFAULT_TRANSIT_FILTERS);
+              setTransitFilters(DEFAULT_TRANSIT_FILTERS);
+              setTopic('exoplanet_transit');
+            }}>Reset</button>
+            <button className="btn-sm" onClick={() => {
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              setTransitFilters(draftFilters);
+              setTopic('exoplanet_transit');
+              setSettingsOpen(false);
+            }}>Apply</button>
           </div>
         </div>,
         document.body

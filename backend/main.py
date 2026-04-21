@@ -12,7 +12,7 @@ from config import (
     SESSION_COOKIE_SECURE,
     SESSION_SECRET,
 )
-from routers import topics, targets, observations, photometry, lightcurve, transit, auth, records, drafts
+from routers import topics, targets, observations, photometry, lightcurve, transit, auth, records, drafts, kmtnet
 from services.transit_fit_service import get_runtime_dependency_status
 
 app = FastAPI(title="EASWA API", version="0.1.0")
@@ -40,6 +40,7 @@ app.include_router(lightcurve.router, prefix="/api")
 app.include_router(transit.router, prefix="/api")
 app.include_router(records.router, prefix="/api")
 app.include_router(drafts.router, prefix="/api")
+app.include_router(kmtnet.router, prefix="/api")
 
 
 @app.get("/api/health")

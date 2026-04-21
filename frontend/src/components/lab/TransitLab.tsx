@@ -75,154 +75,48 @@ const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
 type GuideQuestion =
   | { type: 'open'; id: string; text: string }
   | { type: 'ox'; id: string; text: string; correct: 'O' | 'X'; explanation: string }
-  | {
-      type: 'choice';
-      id: string;
-      text: string;
-      options: string[];
-      correct: string;
-      explanation: string;
-    };
+  | { type: 'choice'; id: string; text: string; options: string[]; correct: string; explanation: string };
 
 const STEP_GUIDES: Record<TransitStep, GuideQuestion[]> = {
   select: [
-    {
-      type: 'ox',
-      id: 'select_q1',
-      text: '비교성은 목표 별보다 밝을수록 좋다.',
-      correct: 'X',
-      explanation:
-        '비교성은 목표 별과 비슷한 밝기여야 측정 오차가 최소화됩니다. 너무 밝거나 어두우면 검출기의 선형 범위를 벗어나 오차가 커집니다.',
-    },
-    {
-      type: 'choice',
-      id: 'select_q2',
-      text: '좋은 비교성의 조건으로 가장 중요한 것은?',
-      options: ['목표 별과 비슷한 밝기', '목표 별에서 최대한 멀리', '색깔이 붉은 별', '가장 밝은 별'],
-      correct: '목표 별과 비슷한 밝기',
-      explanation:
-        '밝기가 비슷한 별을 비교성으로 쓰면 대기·기기 효과가 동일하게 적용되어 차등 측광이 정확해집니다.',
-    },
+    { type: 'ox', id: 'select_q1', text: '비교성은 목표 별보다 밝을수록 좋다.', correct: 'X', explanation: '비교성은 목표 별과 비슷한 밝기여야 측정 오차가 최소화됩니다. 너무 밝거나 어두우면 검출기의 선형 범위를 벗어나 오차가 커집니다.' },
+    { type: 'choice', id: 'select_q2', text: '좋은 비교성의 조건으로 가장 중요한 것은?', options: ['목표 별과 비슷한 밝기', '목표 별에서 최대한 멀리', '색깔이 붉은 별', '가장 밝은 별'], correct: '목표 별과 비슷한 밝기', explanation: '밝기가 비슷한 별을 비교성으로 쓰면 대기·기기 효과가 동일하게 적용되어 차등 측광이 정확해집니다.' },
     { type: 'open', id: 'select_q3', text: '관측 이미지에서 목표 별과 비교성을 어떻게 구별할 수 있을까?' },
   ],
   run: [
-    {
-      type: 'ox',
-      id: 'run_q1',
-      text: '비교성이 많을수록 광도 측정의 정밀도가 항상 높아진다.',
-      correct: 'X',
-      explanation:
-        '품질이 낮은 비교성(변광성, RMS 높음)을 포함하면 오히려 정밀도가 떨어집니다. 좋은 비교성을 선별하는 것이 핵심입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'run_q2',
-      text: '앙상블 측광(ensemble photometry)이 단일 비교성 방식보다 유리한 이유는?',
-      options: ['계산이 빠르다', '개별 비교성의 오차가 평균화된다', '더 많은 별을 탐색할 수 있다', '대기 효과를 완전히 제거한다'],
-      correct: '개별 비교성의 오차가 평균화된다',
-      explanation:
-        '여러 비교성의 평균을 사용하면 특정 별의 우발적 변화가 희석되어 기준 플럭스가 안정됩니다.',
-    },
+    { type: 'ox', id: 'run_q1', text: '비교성이 많을수록 광도 측정의 정밀도가 항상 높아진다.', correct: 'X', explanation: '품질이 낮은 비교성(변광성, RMS 높음)을 포함하면 오히려 정밀도가 떨어집니다. 좋은 비교성을 선별하는 것이 핵심입니다.' },
+    { type: 'choice', id: 'run_q2', text: '앙상블 측광(ensemble photometry)이 단일 비교성 방식보다 유리한 이유는?', options: ['계산이 빠르다', '개별 비교성의 오차가 평균화된다', '더 많은 별을 탐색할 수 있다', '대기 효과를 완전히 제거한다'], correct: '개별 비교성의 오차가 평균화된다', explanation: '여러 비교성의 평균을 사용하면 특정 별의 우발적 변화가 희석되어 기준 플럭스가 안정됩니다.' },
     { type: 'open', id: 'run_q3', text: '구경(aperture) 크기가 측정값에 어떤 영향을 미칠까?' },
   ],
   comparisonqc: [
-    {
-      type: 'ox',
-      id: 'qc_q1',
-      text: '변광성(variable star)은 비교성으로 사용할 수 있다.',
-      correct: 'X',
-      explanation:
-        '변광성은 자체적으로 밝기가 바뀌므로 기준으로 쓰면 목표 별의 변화와 구별할 수 없어 비교성으로 부적합합니다.',
-    },
-    {
-      type: 'choice',
-      id: 'qc_q2',
-      text: '비교성 품질 지표(RMS)가 높다는 것은 무엇을 의미하는가?',
-      options: ['측정이 정밀하다', '밝기 변화가 불규칙하다', '목표 별에 가깝다', '대기가 안정적이다'],
-      correct: '밝기 변화가 불규칙하다',
-      explanation:
-        'RMS(산포도)가 높다는 것은 해당 비교성의 밝기 측정값이 일정하지 않다는 뜻으로, 신뢰할 수 없는 기준임을 의미합니다.',
-    },
+    { type: 'ox', id: 'qc_q1', text: '변광성(variable star)은 비교성으로 사용할 수 있다.', correct: 'X', explanation: '변광성은 자체적으로 밝기가 바뀌므로 기준으로 쓰면 목표 별의 변화와 구별할 수 없어 비교성으로 부적합합니다.' },
+    { type: 'choice', id: 'qc_q2', text: '비교성 품질 지표(RMS)가 높다는 것은 무엇을 의미하는가?', options: ['측정이 정밀하다', '밝기 변화가 불규칙하다', '목표 별에 가깝다', '대기가 안정적이다'], correct: '밝기 변화가 불규칙하다', explanation: 'RMS(산포도)가 높다는 것은 해당 비교성의 밝기 측정값이 일정하지 않다는 뜻으로, 신뢰할 수 없는 기준임을 의미합니다.' },
     { type: 'open', id: 'qc_q3', text: '제외한 비교성이 있다면, 제외 이유를 설명해보자.' },
   ],
   lightcurve: [
-    {
-      type: 'ox',
-      id: 'lc_q1',
-      text: '외계행성 식현상 중에는 별의 밝기가 감소한다.',
-      correct: 'O',
-      explanation:
-        '행성이 별 앞을 지나가면 별빛 일부를 가려 관측되는 밝기가 일시적으로 감소합니다. 이것이 식(transit) 신호입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'lc_q2',
-      text: '밝기 감소량(dip depth)이 클수록 무엇을 의미하는가?',
-      options: ['행성의 공전 주기가 길다', '행성이 별에 비해 크다', '행성의 질량이 크다', '식현상 지속 시간이 짧다'],
-      correct: '행성이 별에 비해 크다',
-      explanation:
-        '식 깊이는 (Rp/R*)²에 비례합니다. 행성이 별에 비해 클수록 더 많은 빛을 가려 밝기 감소가 커집니다.',
-    },
+    { type: 'ox', id: 'lc_q1', text: '외계행성 식현상 중에는 별의 밝기가 감소한다.', correct: 'O', explanation: '행성이 별 앞을 지나가면 별빛 일부를 가려 관측되는 밝기가 일시적으로 감소합니다. 이것이 식(transit) 신호입니다.' },
+    { type: 'choice', id: 'lc_q2', text: '밝기 감소량(dip depth)이 클수록 무엇을 의미하는가?', options: ['행성의 공전 주기가 길다', '행성이 별에 비해 크다', '행성의 질량이 크다', '식현상 지속 시간이 짧다'], correct: '행성이 별에 비해 크다', explanation: '식 깊이는 (Rp/R*)²에 비례합니다. 행성이 별에 비해 클수록 더 많은 빛을 가려 밝기 감소가 커집니다.' },
     { type: 'open', id: 'lc_q3', text: '광도 곡선에서 식의 시작과 끝 지점을 어떻게 찾았는가?' },
   ],
   transitfit: [
-    {
-      type: 'ox',
-      id: 'fit_q1',
-      text: 'χ²_red 값이 1보다 훨씬 크면 모델이 데이터와 잘 맞는다는 뜻이다.',
-      correct: 'X',
-      explanation:
-        'χ²_red ≫ 1이면 모델이 데이터를 잘 설명하지 못하거나 오차를 과소평가한 것입니다. 좋은 적합도는 χ²_red ≈ 1입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'fit_q2',
-      text: 'Rp/R* = 0.1이 의미하는 것은?',
-      options: ['행성 반지름이 별 반지름의 10%', '행성이 별보다 10배 크다', '식 깊이가 10%', '공전 주기가 0.1일'],
-      correct: '행성 반지름이 별 반지름의 10%',
-      explanation:
-        'Rp/R*는 행성 반지름과 별 반지름의 비율입니다. 0.1이면 행성이 별의 10% 크기이고, 식 깊이는 0.1² = 1%가 됩니다.',
-    },
+    { type: 'ox', id: 'fit_q1', text: 'χ²_red 값이 1보다 훨씬 크면 모델이 데이터와 잘 맞는다는 뜻이다.', correct: 'X', explanation: 'χ²_red ≫ 1이면 모델이 데이터를 잘 설명하지 못하거나 오차를 과소평가한 것입니다. 좋은 적합도는 χ²_red ≈ 1입니다.' },
+    { type: 'choice', id: 'fit_q2', text: 'Rp/R* = 0.1이 의미하는 것은?', options: ['행성 반지름이 별 반지름의 10%', '행성이 별보다 10배 크다', '식 깊이가 10%', '공전 주기가 0.1일'], correct: '행성 반지름이 별 반지름의 10%', explanation: 'Rp/R*는 행성 반지름과 별 반지름의 비율입니다. 0.1이면 행성이 별의 10% 크기이고, 식 깊이는 0.1² = 1%가 됩니다.' },
     { type: 'open', id: 'fit_q3', text: '적합 결과가 기대값과 다르다면 그 원인이 무엇일지 생각해보자.' },
   ],
   record: [
-    {
-      type: 'ox',
-      id: 'rec_q1',
-      text: '측정한 Rp/R* 값이 출판된 논문값과 완전히 일치할 것이다.',
-      correct: 'X',
-      explanation:
-        'TESS 데이터 노이즈, 비교성 선택, 구경 설정 등 여러 요인으로 측정값에는 항상 불확실성이 있습니다. 오차 범위 내에 있으면 좋은 결과입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'rec_q2',
-      text: '이번 분석에서 측정 오차의 주요 원인은 무엇이라고 생각하는가?',
-      options: ['비교성 수 부족', '대기 불안정', '구경 크기 설정', '데이터 품질(TESS 노이즈)'],
-      correct: '데이터 품질(TESS 노이즈)',
-      explanation:
-        '지상 관측과 달리 TESS는 우주 망원경이라 대기 영향은 없지만, TESS 자체의 픽셀 크기(21"/px)로 인한 혼입(contamination)이 주요 오차 원인입니다.',
-    },
+    { type: 'ox', id: 'rec_q1', text: '측정한 Rp/R* 값이 출판된 논문값과 완전히 일치할 것이다.', correct: 'X', explanation: 'TESS 데이터 노이즈, 비교성 선택, 구경 설정 등 여러 요인으로 측정값에는 항상 불확실성이 있습니다. 오차 범위 내에 있으면 좋은 결과입니다.' },
+    { type: 'choice', id: 'rec_q2', text: '이번 분석에서 측정 오차의 주요 원인은 무엇이라고 생각하는가?', options: ['비교성 수 부족', '대기 불안정', '구경 크기 설정', '데이터 품질(TESS 노이즈)'], correct: '데이터 품질(TESS 노이즈)', explanation: '지상 관측과 달리 TESS는 우주 망원경이라 대기 영향은 없지만, TESS 자체의 픽셀 크기(21"/px)로 인한 혼입(contamination)이 주요 오차 원인입니다.' },
     { type: 'open', id: 'rec_q3', text: '이번 탐구에서 가장 흥미로웠던 점이나 추가로 알고 싶은 것을 적어보자.' },
   ],
 };
 
 type GuideAnswers = Record<string, string>;
 
-function StepGuide({
-  step,
-  onAnswersChange,
-}: {
-  step: TransitStep;
-  onAnswersChange?: (answers: GuideAnswers) => void;
-}) {
+function StepGuide({ step, onAnswersChange }: { step: TransitStep; onAnswersChange?: (answers: GuideAnswers) => void }) {
   const storageKey = `easwa_guide_open_${step}`;
   const [open, setOpen] = useState(() => {
-    try {
-      return localStorage.getItem(storageKey) !== 'false';
-    } catch {
-      return true;
-    }
+    try { return localStorage.getItem(storageKey) !== 'false'; }
+    catch { return true; }
   });
   const [answers, setAnswers] = useState<GuideAnswers>({});
   const questions = STEP_GUIDES[step];
@@ -242,28 +136,11 @@ function StepGuide({
         onClick={() => {
           const next = !open;
           setOpen(next);
-          try {
-            localStorage.setItem(storageKey, String(next));
-          } catch {
-            // Ignore localStorage failures.
-          }
+          try { localStorage.setItem(storageKey, String(next)); } catch { /* ignore */ }
         }}
       >
         <span>생각해보기</span>
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{
-            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.2s',
-          }}
-        >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
@@ -308,15 +185,7 @@ function StepGuide({
                         <button
                           key={opt}
                           type="button"
-                          className={`transit-guide-choice-btn ${
-                            answered === opt
-                              ? isCorrect
-                                ? 'correct'
-                                : 'wrong'
-                              : answered && opt === q.correct
-                                ? 'reveal'
-                                : ''
-                          }`}
+                          className={`transit-guide-choice-btn ${answered === opt ? (isCorrect ? 'correct' : 'wrong') : (answered && opt === q.correct ? 'reveal' : '')}`}
                           onClick={() => handleAnswer(q.id, answered === opt ? '' : opt)}
                         >
                           {opt}
@@ -337,7 +206,7 @@ function StepGuide({
                   className="transit-guide-textarea"
                   placeholder="여기에 생각을 적어보세요..."
                   value={answers[q.id] ?? ''}
-                  onChange={(event) => handleAnswer(q.id, event.target.value)}
+                  onChange={(e) => handleAnswer(q.id, e.target.value)}
                   rows={3}
                 />
               )}
@@ -1491,21 +1360,20 @@ export function TransitLab({
           : 'Draft session';
 
   return (
+    <div className="transit-lab-wrap">
+      {draftId && (
+        <div className={`transit-draft-bar ${draftSaveStatus}`}>
+          <span className="transit-draft-bar-label">Draft</span>
+          <span className="transit-draft-bar-id">{draftId}</span>
+          {seedRecordSummary && (
+            <span className="transit-draft-bar-seed">Seed #{seedRecordSummary.submission_id}</span>
+          )}
+          <span className="transit-draft-bar-status">{draftStatusLabel}</span>
+        </div>
+      )}
     <div className="lab-content transit-lab">
       {/* ===== SIDEBAR — changes per step ===== */}
       <div className="lab-sidebar">
-        {draftId && (
-          <div className={`transit-callout transit-draft-status ${draftSaveStatus}`}>
-            <div className="transit-draft-status-head">
-              <strong>Draft Session</strong>
-              <span>{draftStatusLabel}</span>
-            </div>
-            <div className="transit-draft-status-meta">
-              <span>{draftId}</span>
-              {seedRecordSummary && <span>Seed #{seedRecordSummary.submission_id}</span>}
-            </div>
-          </div>
-        )}
         {/* Sector list — always visible */}
         <div className="thumbnail-strip">
           <h4>Selected Sectors ({selectedObservations.length})</h4>
@@ -1606,12 +1474,6 @@ export function TransitLab({
                 )}
               </div>
             </div>
-            {pendingCutoutSizePx > 60 && (
-              <p className="hint" style={{ marginTop: 8 }}>
-                Larger cutouts help compare more stars, but long TESS sectors can load more
-                slowly at 70-99 px.
-              </p>
-            )}
 
             {/* Per-star aperture sliders */}
             <div className="transit-controls-card">
@@ -1668,7 +1530,17 @@ export function TransitLab({
             {/* TIC recommended comparisons */}
             {preview && (preview.tic_stars?.length ?? 0) > 0 && (
               <div className="transit-controls-card">
-                <h4>TIC Catalog Stars</h4>
+                <div className="transit-controls-card-header">
+                  <h4>TIC Catalog Stars</h4>
+                  <button
+                    type="button"
+                    className={`btn-sm ${showTicMarkers ? 'active' : ''}`}
+                    onClick={() => dispatch({ type: 'update', updater: (s) => ({ showTicMarkers: !s.showTicMarkers }) })}
+                    title="이미지에 TIC 별 마커 표시"
+                  >
+                    {showTicMarkers ? 'Hide markers' : 'Show markers'}
+                  </button>
+                </div>
                 <p className="hint">
                   Bright stars from TESS Input Catalog in the field of view.
                   Recommended stars are non-variable and bright.
@@ -2348,10 +2220,7 @@ export function TransitLab({
               <div>
                 <h3>1. Select Target & Comparison Stars</h3>
                 <p className="hint">
-                  The target star is marked with an orange aperture (T). Click bright
-                  neighboring stars on the cutout to place comparison apertures (blue).
-                  Use the frame controls above the image to inspect individual cadences.
-                  Click any star on the image or in the sidebar to adjust its aperture.
+                  목표별(T, 주황)이 중앙에 표시됩니다. 주변 밝은 별을 클릭해 비교별(파랑)을 추가하세요.
                 </p>
               </div>
               {activeObservation && (
@@ -2364,9 +2233,14 @@ export function TransitLab({
 
             <StepGuide step="select" onAnswersChange={handleGuideAnswers} />
 
-            <div className="transit-field-size-card">
+            <div className={`transit-field-size-card ${!preview ? 'transit-field-size-card--empty' : ''}`}>
               <div>
                 <strong>Field Size</strong>
+                {!preview && (
+                  <p className="hint" style={{ marginTop: 4, fontSize: 12 }}>
+                    시야 크기를 선택하고 Load를 눌러 TESS 관측 이미지를 불러오세요.
+                  </p>
+                )}
               </div>
               <div className="transit-field-size-options">
                 <select
@@ -2383,11 +2257,11 @@ export function TransitLab({
                 </select>
                 <button
                   type="button"
-                  className="btn-primary btn-sm"
-                  disabled={previewLoading || framePreviewLoading || (cutoutSizePx === pendingCutoutSizePx && preview !== null)}
+                  className={preview ? 'btn-sm' : 'btn-primary'}
+                  disabled={previewLoading || framePreviewLoading}
                   onClick={() => patch({ cutoutSizePx: pendingCutoutSizePx })}
                 >
-                  Load
+                  {previewLoading ? 'Loading…' : preview ? 'Reload' : 'Load'}
                 </button>
               </div>
             </div>
@@ -2399,7 +2273,6 @@ export function TransitLab({
                   displayCutoutSizePx={cutoutSizePx ?? preview.cutout_size_px}
                   stars={starOverlays}
                   showTicMarkers={showTicMarkers}
-                  onToggleTicMarkers={() => dispatch({ type: 'update', updater: (s) => ({ showTicMarkers: !s.showTicMarkers }) })}
                   activeFrameIndex={currentFrameIndex}
                   onFrameChange={handleFrameChange}
                   frameChangeDisabled={previewLoading || framePreviewLoading}
@@ -3605,6 +3478,7 @@ export function TransitLab({
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }
