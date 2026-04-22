@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MicrolensingPoint(BaseModel):
@@ -13,6 +13,15 @@ class MicrolensingLightCurveResponse(BaseModel):
     points: list[MicrolensingPoint]
     x_label: str
     y_label: str
+    extraction_mode: str = "quick"
+    requested_sites: list[str] = Field(default_factory=list)
+    included_sites: list[str] = Field(default_factory=list)
+    missing_sites: list[str] = Field(default_factory=list)
+    sampled_observation_ids: dict[str, list[str]] = Field(default_factory=dict)
+    reference_observation_ids: dict[str, str] = Field(default_factory=dict)
+    excluded_observation_ids: dict[str, list[str]] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    is_complete: bool = True
 
 
 class MicrolensingFitInputPoint(BaseModel):
@@ -83,10 +92,14 @@ class MicrolensingPreviewResponse(BaseModel):
     aligned_target_position: MicrolensingPixelCoordinate
     reference_target_position: MicrolensingPixelCoordinate
     reference_frame_index: int
+    reference_candidate_indices: list[int] = Field(default_factory=list)
     reference_observation_id: str
     reference_hjd: float
     registration_dx_px: float
     registration_dy_px: float
+    registration_quality_score: float
+    registration_hit_limit: bool
+    registration_warning: str | None = None
     frame_metadata: MicrolensingPreviewFrameMetadata
     raw_image_data_url: str
     aligned_image_data_url: str

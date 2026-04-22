@@ -186,8 +186,20 @@ def _encode_rgb_image(rgb: np.ndarray) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def get_lightcurve(target_id: str, site: str | None = None) -> MicrolensingLightCurveResponse:
-    return kmtnet_actual_service.get_lightcurve(target_id, site=site)
+def get_lightcurve(
+    target_id: str,
+    site: str | None = None,
+    mode: str = "quick",
+    include_sites: list[str] | None = None,
+    reference_frame_index: int | None = None,
+) -> MicrolensingLightCurveResponse:
+    return kmtnet_actual_service.get_lightcurve(
+        target_id,
+        site=site,
+        mode=mode,
+        include_sites=include_sites,
+        reference_frame_index=reference_frame_index,
+    )
 
 
 def get_preview(
@@ -195,12 +207,14 @@ def get_preview(
     site: str,
     frame_index: int | None = None,
     size_px: int = _DEFAULT_PREVIEW_CUTOUT_SIZE_PX,
+    reference_frame_index: int | None = None,
 ) -> MicrolensingPreviewResponse:
     return kmtnet_actual_service.get_preview(
         target_id,
         site=site,
         frame_index=frame_index,
         size_px=size_px,
+        reference_frame_index=reference_frame_index,
     )
 
 

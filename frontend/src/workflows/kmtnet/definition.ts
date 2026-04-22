@@ -16,6 +16,9 @@ export type KmtnetWorkflowStep =
 
 export interface PersistedKmtnetLabState {
   previewFrameIndex: number | null;
+  referenceFrameIndex: number | null;
+  extractionMode: 'quick' | 'detailed';
+  mergeSites: string[];
   singleSiteCurve: MicrolensingLightCurveResponse | null;
   mergedCurve: MicrolensingLightCurveResponse | null;
   fitResult: MicrolensingFitResponse | null;
@@ -41,6 +44,16 @@ function normalizeFiniteNumber(value: unknown, fallback = 0): number {
 function normalizeOptionalInteger(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return Math.max(0, Math.round(value));
+}
+
+function normalizeExtractionMode(value: unknown): 'quick' | 'detailed' {
+  return value === 'detailed' ? 'detailed' : 'quick';
+}
+
+function normalizeMergeSites(value: unknown): string[] {
+  if (!Array.isArray(value)) return ['ctio', 'saao', 'sso'];
+  const normalized = value.filter((item): item is string => typeof item === 'string');
+  return normalized.length > 0 ? Array.from(new Set(normalized)) : ['ctio', 'saao', 'sso'];
 }
 
 function normalizeLightCurveResponse(
@@ -80,6 +93,33 @@ function normalizeLightCurveResponse(
     points,
     x_label: typeof candidate.x_label === 'string' ? candidate.x_label : 'HJD',
     y_label: typeof candidate.y_label === 'string' ? candidate.y_label : 'I-band Magnitude',
+    extraction_mode:
+      candidate.extraction_mode === 'detailed' ? 'detailed' : 'quick',
+    requested_sites: Array.isArray(candidate.requested_sites)
+      ? candidate.requested_sites.filter((site): site is string => typeof site === 'string')
+      : [],
+    included_sites: Array.isArray(candidate.included_sites)
+      ? candidate.included_sites.filter((site): site is string => typeof site === 'string')
+      : [],
+    missing_sites: Array.isArray(candidate.missing_sites)
+      ? candidate.missing_sites.filter((site): site is string => typeof site === 'string')
+      : [],
+    sampled_observation_ids:
+      candidate.sampled_observation_ids && typeof candidate.sampled_observation_ids === 'object'
+        ? (candidate.sampled_observation_ids as Record<string, string[]>)
+        : {},
+    reference_observation_ids:
+      candidate.reference_observation_ids && typeof candidate.reference_observation_ids === 'object'
+        ? (candidate.reference_observation_ids as Record<string, string>)
+        : {},
+    excluded_observation_ids:
+      candidate.excluded_observation_ids && typeof candidate.excluded_observation_ids === 'object'
+        ? (candidate.excluded_observation_ids as Record<string, string[]>)
+        : {},
+    warnings: Array.isArray(candidate.warnings)
+      ? candidate.warnings.filter((warning): warning is string => typeof warning === 'string')
+      : [],
+    is_complete: candidate.is_complete !== false,
   };
 }
 
@@ -206,6 +246,9 @@ export function createKmtnetWorkflowDefinition({
       );
       return {
         previewFrameIndex: normalizeOptionalInteger(candidate.previewFrameIndex),
+        referenceFrameIndex: normalizeOptionalInteger(candidate.referenceFrameIndex),
+        extractionMode: normalizeExtractionMode(candidate.extractionMode),
+        mergeSites: normalizeMergeSites(candidate.mergeSites),
         singleSiteCurve: normalizeLightCurveResponse(
           candidate.singleSiteCurve ?? null,
           targetId,

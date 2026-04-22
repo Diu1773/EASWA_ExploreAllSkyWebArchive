@@ -10,6 +10,15 @@ export interface MicrolensingLightCurveResponse {
   points: MicrolensingPoint[];
   x_label: string;
   y_label: string;
+  extraction_mode: string;
+  requested_sites: string[];
+  included_sites: string[];
+  missing_sites: string[];
+  sampled_observation_ids: Record<string, string[]>;
+  reference_observation_ids: Record<string, string>;
+  excluded_observation_ids: Record<string, string[]>;
+  warnings: string[];
+  is_complete: boolean;
 }
 
 export interface MicrolensingFitInputPoint {
@@ -80,10 +89,14 @@ export interface MicrolensingPreviewResponse {
   aligned_target_position: MicrolensingPixelCoordinate;
   reference_target_position: MicrolensingPixelCoordinate;
   reference_frame_index: number;
+  reference_candidate_indices: number[];
   reference_observation_id: string;
   reference_hjd: number;
   registration_dx_px: number;
   registration_dy_px: number;
+  registration_quality_score: number;
+  registration_hit_limit: boolean;
+  registration_warning: string | null;
   frame_metadata: MicrolensingPreviewFrameMetadata;
   raw_image_data_url: string;
   aligned_image_data_url: string;

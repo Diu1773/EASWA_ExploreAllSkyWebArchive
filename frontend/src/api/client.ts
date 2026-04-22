@@ -445,9 +445,21 @@ export async function fetchGuideStats(): Promise<GuideStats> {
 export async function fetchMicrolensingLightcurve(
   targetId: string,
   site?: string | null,
+  options?: {
+    mode?: 'quick' | 'detailed';
+    includeSites?: string[];
+    referenceFrameIndex?: number | null;
+  },
 ): Promise<MicrolensingLightCurveResponse> {
   const params = new URLSearchParams();
   if (site) params.set('site', site);
+  if (options?.mode) params.set('mode', options.mode);
+  if (options?.referenceFrameIndex !== undefined && options.referenceFrameIndex !== null) {
+    params.set('reference_frame_index', String(options.referenceFrameIndex));
+  }
+  for (const selectedSite of options?.includeSites ?? []) {
+    params.append('include_site', selectedSite);
+  }
   const query = params.size > 0 ? `?${params.toString()}` : '';
   return get(`/kmtnet/lightcurve/${encodeURIComponent(targetId)}${query}`);
 }
@@ -457,6 +469,7 @@ export async function fetchMicrolensingPreview(
   site: string,
   frameIndex?: number | null,
   sizePx = 64,
+  referenceFrameIndex?: number | null,
 ): Promise<MicrolensingPreviewResponse> {
   const params = new URLSearchParams({
     site,
@@ -464,6 +477,9 @@ export async function fetchMicrolensingPreview(
   });
   if (frameIndex !== undefined && frameIndex !== null) {
     params.set('frame_index', String(frameIndex));
+  }
+  if (referenceFrameIndex !== undefined && referenceFrameIndex !== null) {
+    params.set('reference_frame_index', String(referenceFrameIndex));
   }
   return get(`/kmtnet/preview/${encodeURIComponent(targetId)}?${params.toString()}`);
 }

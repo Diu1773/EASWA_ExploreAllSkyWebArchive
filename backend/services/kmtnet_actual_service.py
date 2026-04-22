@@ -45,12 +45,14 @@ _PREVIEW_IMAGE_SIZE_PX = 320
 _DEFAULT_CUTOUT_SIZE_PX = 64
 _MIN_CUTOUT_SIZE_PX = 48
 _MAX_CUTOUT_SIZE_PX = 96
-_LIGHTCURVE_SAMPLE_LIMIT_PER_SITE = 4
+_LIGHTCURVE_QUICK_SAMPLE_LIMIT_PER_SITE = 4
+_LIGHTCURVE_DETAILED_SAMPLE_LIMIT_PER_SITE = 10
 _REFERENCE_SAMPLE_COUNT = 3
 _DOWNLOAD_TIMEOUT_SECONDS = 90.0
 _REGISTRATION_MAX_SHIFT_PX = 5
 _SITE_LIGHTCURVE_WORKERS = 4
 _MERGED_LIGHTCURVE_WORKERS = 3
+_DEFAULT_EXTRACTION_MODE = "quick"
 
 logger = logging.getLogger(__name__)
 
@@ -66,39 +68,86 @@ class _CutoutFrame:
     target_y: float
 
 
-def get_lightcurve(target_id: str, site: str | None = None) -> MicrolensingLightCurveResponse:
+@dataclass(frozen=True)
+class _ExtractionPointResult:
+    point: MicrolensingPoint | None
+    observation_id: str
+    warning: str | None = None
+
+
+def get_lightcurve(
+    target_id: str,
+    site: str | None = None,
+    mode: str = _DEFAULT_EXTRACTION_MODE,
+    include_sites: list[str] | None = None,
+    reference_frame_index: int | None = None,
+) -> MicrolensingLightCurveResponse:
     site_token = site.strip().lower() if isinstance(site, str) else "__all__"
+    extraction_mode = _normalize_extraction_mode(mode)
     if site_token == "__all__":
-        return _get_merged_lightcurve_cached(target_id)
-    return _get_single_site_lightcurve_cached(target_id, _normalize_site_key(site_token))
+        requested_sites = tuple(_normalize_requested_sites(include_sites))
+        return _get_merged_lightcurve_cached(target_id, extraction_mode, requested_sites)
+
+    site_key = _normalize_site_key(site_token)
+    reference_observation_id = _resolve_reference_request(
+        target_id,
+        site_key,
+        reference_frame_index,
+    )
+    return _get_single_site_lightcurve_cached(
+        target_id,
+        site_key,
+        extraction_mode,
+        reference_observation_id or "__auto__",
+    )
 
 
 @lru_cache(maxsize=24)
-def _get_merged_lightcurve_cached(target_id: str) -> MicrolensingLightCurveResponse:
+def _get_merged_lightcurve_cached(
+    target_id: str,
+    extraction_mode: str,
+    requested_sites: tuple[str, ...],
+) -> MicrolensingLightCurveResponse:
     target = archive.get_target(target_id)
     if not target:
         raise ValueError(f"Target not found: {target_id}")
 
     site_curves: list[MicrolensingLightCurveResponse] = []
+    missing_sites: list[str] = []
+    warnings: list[str] = []
+    sampled_observation_ids: dict[str, list[str]] = {}
+    reference_observation_ids: dict[str, str] = {}
+    excluded_observation_ids: dict[str, list[str]] = {}
     with ThreadPoolExecutor(max_workers=_MERGED_LIGHTCURVE_WORKERS) as executor:
         futures = {
-            executor.submit(_get_single_site_lightcurve_cached, target_id, site_key): site_key
-            for site_key in _SITE_LABELS
+            executor.submit(
+                _get_single_site_lightcurve_cached,
+                target_id,
+                site_key,
+                extraction_mode,
+                "__auto__",
+            ): site_key
+            for site_key in requested_sites
         }
         for future in as_completed(futures):
             site_key = futures[future]
             try:
                 site_curve = future.result()
             except Exception as error:
-                logger.warning(
-                    "Skipping merged KMT site curve for %s/%s: %s",
-                    target_id,
-                    site_key,
-                    error,
-                )
+                message = f"{site_key.upper()} site extraction failed: {error}"
+                logger.warning("Incomplete merged KMT curve for %s/%s: %s", target_id, site_key, error)
+                missing_sites.append(site_key)
+                warnings.append(message)
                 continue
             if site_curve.points:
                 site_curves.append(site_curve)
+                sampled_observation_ids.update(site_curve.sampled_observation_ids)
+                reference_observation_ids.update(site_curve.reference_observation_ids)
+                excluded_observation_ids.update(site_curve.excluded_observation_ids)
+                warnings.extend(site_curve.warnings)
+            else:
+                missing_sites.append(site_key)
+                warnings.append(f"{site_key.upper()} returned no valid light-curve points.")
 
     points = sorted(
         [point for curve in site_curves for point in curve.points],
@@ -112,6 +161,15 @@ def _get_merged_lightcurve_cached(target_id: str) -> MicrolensingLightCurveRespo
         points=points,
         x_label="HJD",
         y_label="Relative magnitude from actual KMTNet cutouts",
+        extraction_mode=extraction_mode,
+        requested_sites=list(requested_sites),
+        included_sites=sorted({point.site for point in points}),
+        missing_sites=sorted(dict.fromkeys(missing_sites)),
+        sampled_observation_ids=sampled_observation_ids,
+        reference_observation_ids=reference_observation_ids,
+        excluded_observation_ids=excluded_observation_ids,
+        warnings=list(dict.fromkeys(warnings)),
+        is_complete=len(missing_sites) == 0,
     )
 
 
@@ -119,6 +177,8 @@ def _get_merged_lightcurve_cached(target_id: str) -> MicrolensingLightCurveRespo
 def _get_single_site_lightcurve_cached(
     target_id: str,
     site_key: str,
+    extraction_mode: str,
+    reference_observation_id_token: str,
 ) -> MicrolensingLightCurveResponse:
     target = archive.get_target(target_id)
     if not target:
@@ -126,12 +186,19 @@ def _get_single_site_lightcurve_cached(
 
     baseline_mag = _target_baseline_magnitude(target)
     points: list[MicrolensingPoint] = []
+    warnings: list[str] = []
+    excluded_observation_ids: list[str] = []
     rows = _list_rows(target_id, site_key)
     if not rows:
         raise ValueError(f"No KMTNet observations available for {target_id} at {site_key}.")
 
-    sampled_rows = _downsample_rows(rows, _LIGHTCURVE_SAMPLE_LIMIT_PER_SITE)
-    reference_row = _resolve_reference_row(target_id, site_key, _DEFAULT_CUTOUT_SIZE_PX)
+    sampled_rows = _downsample_rows(rows, _sample_limit_for_mode(extraction_mode))
+    reference_row = _resolve_reference_row(
+        target_id,
+        site_key,
+        _DEFAULT_CUTOUT_SIZE_PX,
+        None if reference_observation_id_token == "__auto__" else reference_observation_id_token,
+    )
     try:
         reference_frame = _load_cutout_frame(target, reference_row, _DEFAULT_CUTOUT_SIZE_PX)
     except Exception as error:
@@ -163,7 +230,7 @@ def _get_single_site_lightcurve_cached(
         for future in as_completed(futures):
             row = futures[future]
             try:
-                point = future.result()
+                result = future.result()
             except Exception as error:
                 logger.warning(
                     "Skipping KMT frame %s for %s/%s during light-curve extraction: %s",
@@ -172,9 +239,15 @@ def _get_single_site_lightcurve_cached(
                     site_key,
                     error,
                 )
+                excluded_observation_ids.append(str(row.get("id")))
+                warnings.append(f"{site_key.upper()} frame {row.get('id')} failed during extraction.")
                 continue
-            if point is not None:
-                points.append(point)
+            if result.warning:
+                warnings.append(result.warning)
+            if result.point is not None:
+                points.append(result.point)
+            else:
+                excluded_observation_ids.append(result.observation_id)
 
     points.sort(key=lambda point: point.hjd)
     if not points:
@@ -185,6 +258,15 @@ def _get_single_site_lightcurve_cached(
         points=points,
         x_label="HJD",
         y_label="Relative magnitude from actual KMTNet cutouts",
+        extraction_mode=extraction_mode,
+        requested_sites=[site_key],
+        included_sites=[site_key],
+        missing_sites=[],
+        sampled_observation_ids={site_key: [str(row["id"]) for row in sampled_rows]},
+        reference_observation_ids={site_key: str(reference_row["id"])},
+        excluded_observation_ids={site_key: excluded_observation_ids},
+        warnings=list(dict.fromkeys(warnings)),
+        is_complete=True,
     )
 
 
@@ -197,6 +279,16 @@ def _extract_site_point(
 ) -> MicrolensingPoint | None:
     frame = _load_cutout_frame(target, row, _DEFAULT_CUTOUT_SIZE_PX)
     aligned_frame = _register_frame_to_reference(frame, reference_frame)
+    observation_id = str(row["id"])
+    if aligned_frame.hit_limit:
+        return _ExtractionPointResult(
+            point=None,
+            observation_id=observation_id,
+            warning=(
+                f"{frame.site.upper()} frame {observation_id} hit the registration shift limit "
+                f"({aligned_frame.shift_x:.1f}, {aligned_frame.shift_y:.1f} px) and was excluded."
+            ),
+        )
     difference = aligned_frame.bg_subtracted - reference_frame.bg_subtracted
     difference_flux = _measure_net_flux(
         difference,
@@ -211,11 +303,14 @@ def _extract_site_point(
     )
     mag_error = float(np.clip(1.0857 * flux_error / total_flux, 0.02, 0.35))
     magnitude = baseline_mag - 2.5 * np.log10(total_flux / reference_flux)
-    return MicrolensingPoint(
-        hjd=float(row["hjd"]),
-        site=str(frame.site),
-        magnitude=round(float(magnitude), 4),
-        mag_error=round(float(mag_error), 4),
+    return _ExtractionPointResult(
+        point=MicrolensingPoint(
+            hjd=float(row["hjd"]),
+            site=str(frame.site),
+            magnitude=round(float(magnitude), 4),
+            mag_error=round(float(mag_error), 4),
+        ),
+        observation_id=observation_id,
     )
 
 
@@ -224,9 +319,18 @@ def get_preview(
     site: str,
     frame_index: int | None = None,
     size_px: int = _DEFAULT_CUTOUT_SIZE_PX,
+    reference_frame_index: int | None = None,
 ) -> MicrolensingPreviewResponse:
     resolved_frame_index = 0 if frame_index is None else int(frame_index)
-    return _get_preview_cached(target_id, site, resolved_frame_index, int(size_px))
+    site_key = _normalize_site_key(site)
+    reference_observation_id = _resolve_reference_request(target_id, site_key, reference_frame_index)
+    return _get_preview_cached(
+        target_id,
+        site_key,
+        resolved_frame_index,
+        int(size_px),
+        reference_observation_id or "__auto__",
+    )
 
 
 @lru_cache(maxsize=256)
@@ -235,6 +339,7 @@ def _get_preview_cached(
     site: str,
     frame_index: int,
     size_px: int,
+    reference_observation_id_token: str,
 ) -> MicrolensingPreviewResponse:
     target = archive.get_target(target_id)
     if not target:
@@ -248,7 +353,12 @@ def _get_preview_cached(
     resolved_size_px = _normalize_cutout_size(size_px)
     resolved_frame_index = max(0, min(len(rows) - 1, int(frame_index)))
     selected_row = rows[resolved_frame_index]
-    reference_row = _resolve_reference_row(target_id, site_key, resolved_size_px)
+    reference_row = _resolve_reference_row(
+        target_id,
+        site_key,
+        resolved_size_px,
+        None if reference_observation_id_token == "__auto__" else reference_observation_id_token,
+    )
     reference_frame_index = next(
         (index for index, row in enumerate(rows) if row["id"] == reference_row["id"]),
         0,
@@ -317,10 +427,18 @@ def _get_preview_cached(
             y=round(float(reference_frame.target_y), 2),
         ),
         reference_frame_index=reference_frame_index,
+        reference_candidate_indices=_sample_frame_indices(len(rows)),
         reference_observation_id=str(reference_row["id"]),
         reference_hjd=float(reference_row["hjd"]),
         registration_dx_px=round(float(aligned_frame.shift_x), 2),
         registration_dy_px=round(float(aligned_frame.shift_y), 2),
+        registration_quality_score=round(float(aligned_frame.quality_score), 6),
+        registration_hit_limit=aligned_frame.hit_limit,
+        registration_warning=(
+            "Registration shift hit the search limit; inspect this frame carefully."
+            if aligned_frame.hit_limit
+            else None
+        ),
         frame_metadata=MicrolensingPreviewFrameMetadata(
             frame_index=resolved_frame_index,
             observation_id=str(selected_row["id"]),
@@ -346,6 +464,34 @@ def _normalize_site_key(site: str | None) -> str:
     if site_key not in _SITE_LABELS:
         raise ValueError(f"Unknown site: {site}")
     return site_key
+
+
+def _normalize_requested_sites(include_sites: list[str] | None) -> list[str]:
+    if not include_sites:
+        return list(_SITE_LABELS)
+    requested_sites: list[str] = []
+    for site in include_sites:
+        site_key = _normalize_site_key(site)
+        if site_key not in requested_sites:
+            requested_sites.append(site_key)
+    return requested_sites
+
+
+def _normalize_extraction_mode(mode: str | None) -> str:
+    mode_key = str(mode or _DEFAULT_EXTRACTION_MODE).strip().lower()
+    if mode_key in {"quick", "fast"}:
+        return "quick"
+    if mode_key in {"detailed", "full"}:
+        return "detailed"
+    raise ValueError(f"Unknown extraction mode: {mode}")
+
+
+def _sample_limit_for_mode(mode: str) -> int:
+    return (
+        _LIGHTCURVE_DETAILED_SAMPLE_LIMIT_PER_SITE
+        if mode == "detailed"
+        else _LIGHTCURVE_QUICK_SAMPLE_LIMIT_PER_SITE
+    )
 
 
 def _normalize_cutout_size(size_px: int) -> int:
@@ -426,10 +572,38 @@ def _resolve_reference_observation_id(target_id: str, site_key: str, size_px: in
     return best_row_id
 
 
-def _resolve_reference_row(target_id: str, site_key: str, size_px: int) -> dict[str, Any]:
-    observation_id = _resolve_reference_observation_id(target_id, site_key, size_px)
+def _resolve_reference_row(
+    target_id: str,
+    site_key: str,
+    size_px: int,
+    requested_observation_id: str | None = None,
+) -> dict[str, Any]:
+    observation_id = (
+        requested_observation_id
+        if requested_observation_id is not None
+        else _resolve_reference_observation_id(target_id, site_key, size_px)
+    )
     rows = _list_rows(target_id, site_key)
-    return next((row for row in rows if str(row["id"]) == observation_id), rows[0])
+    row = next((candidate for candidate in rows if str(candidate["id"]) == observation_id), None)
+    if row is None:
+        raise ValueError(
+            f"Reference observation {observation_id} is not available for {target_id}/{site_key}."
+        )
+    return row
+
+
+def _resolve_reference_request(
+    target_id: str,
+    site_key: str,
+    reference_frame_index: int | None,
+) -> str | None:
+    if reference_frame_index is None:
+        return None
+    rows = _list_rows(target_id, site_key)
+    if not rows:
+        raise ValueError(f"No KMTNet observations available for {target_id} at {site_key}.")
+    resolved_index = max(0, min(len(rows) - 1, int(reference_frame_index)))
+    return str(rows[resolved_index]["id"])
 
 
 @dataclass(frozen=True)
@@ -438,13 +612,15 @@ class _RegisteredFrame:
     bg_subtracted: np.ndarray
     shift_x: float
     shift_y: float
+    quality_score: float
+    hit_limit: bool
 
 
 def _register_frame_to_reference(
     frame: _CutoutFrame,
     reference_frame: _CutoutFrame,
 ) -> _RegisteredFrame:
-    shift_x, shift_y = _estimate_registration_shift(
+    shift_x, shift_y, quality_score, hit_limit = _estimate_registration_shift(
         reference_frame.bg_subtracted,
         frame.bg_subtracted,
     )
@@ -455,6 +631,8 @@ def _register_frame_to_reference(
         bg_subtracted=aligned_bg,
         shift_x=shift_x,
         shift_y=shift_y,
+        quality_score=quality_score,
+        hit_limit=hit_limit,
     )
 
 
@@ -536,14 +714,14 @@ def _estimate_registration_shift(
     reference_image: np.ndarray,
     moving_image: np.ndarray,
     max_shift_px: int = _REGISTRATION_MAX_SHIFT_PX,
-) -> tuple[float, float]:
+) -> tuple[float, float, float, bool]:
     ref = np.asarray(reference_image, dtype=np.float32)
     mov = np.asarray(moving_image, dtype=np.float32)
 
     ref_finite = ref[np.isfinite(ref)]
     mov_finite = mov[np.isfinite(mov)]
     if ref_finite.size == 0 or mov_finite.size == 0:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, False
 
     ref_centered = np.nan_to_num(ref - float(np.nanmedian(ref_finite)), nan=0.0)
     mov_centered = np.nan_to_num(mov - float(np.nanmedian(mov_finite)), nan=0.0)
@@ -565,7 +743,8 @@ def _estimate_registration_shift(
                 best_score = score
                 best_shift = (float(shift_x), float(shift_y))
 
-    return best_shift
+    hit_limit = abs(best_shift[0]) >= max_shift_px or abs(best_shift[1]) >= max_shift_px
+    return best_shift[0], best_shift[1], best_score, hit_limit
 
 
 def _shift_image(

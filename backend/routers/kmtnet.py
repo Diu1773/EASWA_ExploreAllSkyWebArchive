@@ -15,9 +15,25 @@ router = APIRouter(tags=["kmtnet"])
 def get_microlensing_lightcurve(
     target_id: str,
     site: str | None = Query(default=None, description="Filter by site: ctio, saao, sso"),
+    mode: str = Query(default="quick", description="Extraction mode: quick or detailed"),
+    include_site: list[str] | None = Query(
+        default=None,
+        description="Requested merge sites when site is omitted.",
+    ),
+    reference_frame_index: int | None = Query(
+        default=None,
+        ge=0,
+        description="Optional manual reference frame index for single-site extraction.",
+    ),
 ):
     try:
-        return microlensing_service.get_lightcurve(target_id, site=site)
+        return microlensing_service.get_lightcurve(
+            target_id,
+            site=site,
+            mode=mode,
+            include_sites=include_site,
+            reference_frame_index=reference_frame_index,
+        )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -35,6 +51,11 @@ def get_microlensing_preview(
     target_id: str,
     site: str = Query(..., description="Site id: ctio, saao, sso"),
     frame_index: int | None = Query(default=None, ge=0, description="Preview frame index"),
+    reference_frame_index: int | None = Query(
+        default=None,
+        ge=0,
+        description="Optional manual reference frame index.",
+    ),
     size_px: int = Query(default=64, ge=48, le=96, description="Actual cutout size in pixels"),
 ):
     try:
@@ -43,6 +64,7 @@ def get_microlensing_preview(
             site=site,
             frame_index=frame_index,
             size_px=size_px,
+            reference_frame_index=reference_frame_index,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

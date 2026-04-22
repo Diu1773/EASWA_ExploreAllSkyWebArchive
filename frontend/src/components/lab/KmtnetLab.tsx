@@ -48,6 +48,11 @@ const SITE_PHOTOS: Record<string, string | null> = {
   sso:  '/images/kmtnet-sso.jpg',
 };
 const ALL_SITES = ['ctio', 'saao', 'sso'];
+type ExtractionMode = 'quick' | 'detailed';
+
+function extractionModeLabel(mode: ExtractionMode): string {
+  return mode === 'detailed' ? 'Detailed sampled extraction' : 'Quick sampled extraction';
+}
 
 const KMT_GUIDES: Record<'field' | 'align' | 'difference' | 'extract' | 'merge' | 'fit', GuideQuestion[]> = {
   field: [
@@ -412,9 +417,12 @@ function AlignmentPanel({
         <span>
           현재 프레임은 기준 프레임에 맞춰 <strong>x {preview.registration_dx_px >= 0 ? '+' : ''}{preview.registration_dx_px.toFixed(2)} px</strong>,
           <strong> y {preview.registration_dy_px >= 0 ? '+' : ''}{preview.registration_dy_px.toFixed(2)} px</strong> 만큼 이동했습니다.
+          {' '}
+          정렬 점수는 <strong>{preview.registration_quality_score.toFixed(4)}</strong> 입니다.
         </span>
         <span>
           정렬이 맞을수록 별상이 reference와 더 잘 겹치고, 다음 단계 difference image에서 잔차가 더 깔끔하게 남습니다.
+          {preview.registration_warning ? ` ${preview.registration_warning}` : ''}
           {frameLoading ? ' 새 프레임을 불러오는 중입니다…' : ''}
         </span>
       </div>
@@ -564,6 +572,9 @@ export function KmtnetLab({
   const user = useAuthStore((s) => s.user);
   const [preview, setPreview] = useState<MicrolensingPreviewResponse | null>(null);
   const [previewFrameIndex, setPreviewFrameIndex] = useState<number | null>(null);
+  const [referenceFrameIndex, setReferenceFrameIndex] = useState<number | null>(null);
+  const [extractionMode, setExtractionMode] = useState<ExtractionMode>('quick');
+  const [mergeSites, setMergeSites] = useState<string[]>(ALL_SITES);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [singleSiteCurve, setSingleSiteCurve] = useState<MicrolensingLightCurveResponse | null>(null);
@@ -599,6 +610,9 @@ export function KmtnetLab({
   const workflowSnapshot: PersistedKmtnetLabState = useMemo(
     () => ({
       previewFrameIndex,
+      referenceFrameIndex,
+      extractionMode,
+      mergeSites,
       singleSiteCurve,
       mergedCurve,
       fitResult,
@@ -606,7 +620,18 @@ export function KmtnetLab({
       recordTitle,
       submittedRecord,
     }),
-    [fitResult, mergedCurve, previewFrameIndex, recordAnswers, recordTitle, singleSiteCurve, submittedRecord],
+    [
+      extractionMode,
+      fitResult,
+      mergeSites,
+      mergedCurve,
+      previewFrameIndex,
+      recordAnswers,
+      recordTitle,
+      referenceFrameIndex,
+      singleSiteCurve,
+      submittedRecord,
+    ],
   );
   const workflowAvailability = useMemo<KmtnetStepAvailability>(
     () => workflowDefinition.getAvailability(workflowSnapshot),
@@ -643,6 +668,9 @@ export function KmtnetLab({
     },
     applyRestoredSnapshot: (saved) => {
       setPreviewFrameIndex(saved?.previewFrameIndex ?? null);
+      setReferenceFrameIndex(saved?.referenceFrameIndex ?? null);
+      setExtractionMode(saved?.extractionMode ?? 'quick');
+      setMergeSites(saved?.mergeSites ?? ALL_SITES);
       setSingleSiteCurve(saved?.singleSiteCurve ?? null);
       setMergedCurve(saved?.mergedCurve ?? null);
       setFitResult(saved?.fitResult ?? null);
@@ -688,6 +716,9 @@ export function KmtnetLab({
             merged_curve?: MicrolensingLightCurveResponse | null;
             microlensing_fit?: MicrolensingFitResponse | null;
             preview_frame_index?: number | null;
+            reference_frame_index?: number | null;
+            extraction_mode?: ExtractionMode;
+            merge_sites?: string[];
           };
           answers?: Record<string, unknown>;
         };
@@ -704,6 +735,15 @@ export function KmtnetLab({
         }
         if (typeof payload.context?.preview_frame_index === 'number') {
           setPreviewFrameIndex(Math.max(0, Math.round(payload.context.preview_frame_index)));
+        }
+        if (typeof payload.context?.reference_frame_index === 'number') {
+          setReferenceFrameIndex(Math.max(0, Math.round(payload.context.reference_frame_index)));
+        }
+        if (payload.context?.extraction_mode === 'quick' || payload.context?.extraction_mode === 'detailed') {
+          setExtractionMode(payload.context.extraction_mode);
+        }
+        if (Array.isArray(payload.context?.merge_sites) && payload.context.merge_sites.length > 0) {
+          setMergeSites(payload.context.merge_sites);
         }
         if (payload.answers && Object.keys(payload.answers).length > 0) {
           setRecordAnswers(payload.answers);
@@ -748,9 +788,18 @@ export function KmtnetLab({
   }, [previewFrameIndex, workflowHydrated]);
 
   useEffect(() => {
+    setReferenceFrameIndex(null);
+    setPreview(null);
+    setPreviewError(null);
+    setSingleSiteCurve(null);
+    setMergedCurve(null);
+    setFitResult(null);
+  }, [siteId]);
+
+  useEffect(() => {
     if (!workflowHydrated || previewFrameIndex === null) return;
     let cancelled = false;
-    const cacheKey = `${target.id}:${siteId}:${previewFrameIndex}`;
+    const cacheKey = `${target.id}:${siteId}:${previewFrameIndex}:${referenceFrameIndex ?? 'auto'}`;
     const cachedPreview = previewCacheRef.current.get(cacheKey);
     if (cachedPreview) {
       setPreview(cachedPreview);
@@ -760,7 +809,7 @@ export function KmtnetLab({
     }
     setPreviewLoading(true);
     setPreviewError(null);
-    void fetchMicrolensingPreview(target.id, siteId, previewFrameIndex)
+    void fetchMicrolensingPreview(target.id, siteId, previewFrameIndex, 64, referenceFrameIndex)
       .then((response) => {
         if (cancelled) return;
         previewCacheRef.current.set(cacheKey, response);
@@ -784,7 +833,7 @@ export function KmtnetLab({
     return () => {
       cancelled = true;
     };
-  }, [previewFrameIndex, siteId, target.id, workflowHydrated]);
+  }, [previewFrameIndex, referenceFrameIndex, siteId, target.id, workflowHydrated]);
 
   useEffect(() => {
     if (!preview || !workflowHydrated) return;
@@ -798,9 +847,9 @@ export function KmtnetLab({
     const uniqueNeighbors = Array.from(new Set(neighbors));
 
     uniqueNeighbors.forEach((neighborIndex) => {
-      const cacheKey = `${target.id}:${siteId}:${neighborIndex}`;
+      const cacheKey = `${target.id}:${siteId}:${neighborIndex}:${referenceFrameIndex ?? 'auto'}`;
       if (previewCacheRef.current.has(cacheKey)) return;
-      void fetchMicrolensingPreview(target.id, siteId, neighborIndex)
+      void fetchMicrolensingPreview(target.id, siteId, neighborIndex, 64, referenceFrameIndex)
         .then((response) => {
           previewCacheRef.current.set(cacheKey, response);
         })
@@ -808,20 +857,30 @@ export function KmtnetLab({
           // Ignore prefetch failures; the foreground request will surface real errors.
         });
     });
-  }, [preview, siteId, target.id, workflowHydrated]);
+  }, [preview, referenceFrameIndex, siteId, target.id, workflowHydrated]);
 
   useEffect(() => {
-    setSingleSiteCurve((current) =>
-      current && current.points.every((point) => point.site === siteId) ? current : null,
-    );
-  }, [siteId]);
+    setSingleSiteCurve(null);
+    setMergedCurve(null);
+    setFitResult(null);
+    setError(null);
+  }, [extractionMode, referenceFrameIndex]);
+
+  useEffect(() => {
+    setMergedCurve(null);
+    setFitResult(null);
+    setError(null);
+  }, [mergeSites]);
 
   const handleGenerateSingleSiteCurve = async () => {
     setSingleSiteLoading(true);
     setError(null);
     setFitResult(null);
     try {
-      const data = await fetchMicrolensingLightcurve(target.id, siteId);
+      const data = await fetchMicrolensingLightcurve(target.id, siteId, {
+        mode: extractionMode,
+        referenceFrameIndex,
+      });
       setSingleSiteCurve(data);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '선택한 관측소 곡선을 불러오지 못했습니다.');
@@ -835,7 +894,10 @@ export function KmtnetLab({
     setError(null);
     setFitResult(null);
     try {
-      const data = await fetchMicrolensingLightcurve(target.id);
+      const data = await fetchMicrolensingLightcurve(target.id, null, {
+        mode: extractionMode,
+        includeSites: mergeSites,
+      });
       setMergedCurve(data);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'KMT network 곡선을 불러오지 못했습니다.');
@@ -884,6 +946,20 @@ export function KmtnetLab({
         : draftSaveStatus === 'error'
           ? 'Draft save failed'
           : null;
+  const currentReferenceFrameIndex = referenceFrameIndex ?? preview?.reference_frame_index ?? null;
+  const referenceCandidateIndices = preview?.reference_candidate_indices ?? [];
+  const canRunMergedCurve = mergeSites.length > 0;
+  const mergedCurveMissingSites = mergedCurve?.missing_sites ?? [];
+  const mergeIsIncomplete = Boolean(mergedCurve && !mergedCurve.is_complete);
+
+  const toggleMergeSite = (nextSite: string) => {
+    setMergeSites((current) => {
+      if (current.includes(nextSite)) {
+        return current.filter((site) => site !== nextSite);
+      }
+      return [...current, nextSite];
+    });
+  };
 
   return (
     <div className="kmtnet-lab">
@@ -981,6 +1057,44 @@ export function KmtnetLab({
             </p>
           </div>
 
+          <div className="ml-lightcurve-card">
+            <div className="ml-lightcurve-card-head">
+              <strong>Reference 선택</strong>
+              <span>학생이 기준 frame을 바꾸면 정렬과 차분 결과가 어떻게 달라지는지 비교할 수 있습니다.</span>
+            </div>
+            <div className="record-radio-group">
+              <label className="record-choice-row">
+                <input
+                  type="radio"
+                  name="kmt-reference-frame"
+                  checked={referenceFrameIndex === null}
+                  onChange={() => setReferenceFrameIndex(null)}
+                />
+                <span>Auto reference</span>
+              </label>
+              {referenceCandidateIndices.map((candidateIndex) => (
+                <label key={candidateIndex} className="record-choice-row">
+                  <input
+                    type="radio"
+                    name="kmt-reference-frame"
+                    checked={referenceFrameIndex === candidateIndex}
+                    onChange={() => setReferenceFrameIndex(candidateIndex)}
+                  />
+                  <span>Frame #{candidateIndex + 1}</span>
+                </label>
+              ))}
+            </div>
+            <p className="hint">
+              현재 적용 중인 기준 frame:
+              {' '}
+              {currentReferenceFrameIndex !== null ? `#${currentReferenceFrameIndex + 1}` : 'auto'}
+              {preview ? ` · Obs ${preview.reference_observation_id}` : ''}
+            </p>
+            {preview?.registration_warning && (
+              <p className="error-message">{preview.registration_warning}</p>
+            )}
+          </div>
+
           {preview && (
             <AlignmentPanel
               preview={preview}
@@ -1013,6 +1127,14 @@ export function KmtnetLab({
               기준 frame과 현재 frame을 비교해, 실제로 밝기가 변한 위치만 남기는 KMT식 차분영상을 확인합니다.
             </p>
           </div>
+
+          {preview?.registration_warning && (
+            <p className="error-message">
+              {preview.registration_warning}
+              {' '}
+              reference를 바꾸거나 이 frame을 제외하는 쪽이 더 안전합니다.
+            </p>
+          )}
 
           {preview && (
             <KmtnetPreviewPanel
@@ -1047,6 +1169,38 @@ export function KmtnetLab({
             </p>
           </div>
 
+          <div className="ml-lightcurve-card">
+            <div className="ml-lightcurve-card-head">
+              <strong>추출 설정</strong>
+              <span>{siteLabel} 단일 곡선에 사용할 샘플 밀도를 고릅니다.</span>
+            </div>
+            <div className="record-radio-group">
+              <label className="record-choice-row">
+                <input
+                  type="radio"
+                  name="kmt-extraction-mode"
+                  checked={extractionMode === 'quick'}
+                  onChange={() => setExtractionMode('quick')}
+                />
+                <span>Quick sampled extraction</span>
+              </label>
+              <label className="record-choice-row">
+                <input
+                  type="radio"
+                  name="kmt-extraction-mode"
+                  checked={extractionMode === 'detailed'}
+                  onChange={() => setExtractionMode('detailed')}
+                />
+                <span>Detailed sampled extraction</span>
+              </label>
+            </div>
+            <p className="hint">
+              현재 모드: <strong>{extractionModeLabel(extractionMode)}</strong>.
+              {' '}
+              Quick은 빠르게, Detailed는 더 촘촘하게 sampled frame을 사용합니다.
+            </p>
+          </div>
+
           {singleSiteLoading && (
             <div className="ml-lightcurve-card">
               <div className="ml-lightcurve-card-head">
@@ -1064,13 +1218,17 @@ export function KmtnetLab({
           {!singleSiteCurve && !singleSiteLoading && (
             <div className="ml-lightcurve-card">
               <div className="ml-lightcurve-card-head">
-                <strong>single-site extraction</strong>
-                <span>먼저 선택한 관측소의 곡선을 생성합니다.</span>
-              </div>
-              <p className="hint">
-                이 단계에서는 <strong>{siteLabel}</strong>의 실제 cutout만 사용합니다. network merge는 다음 단계에서 따로 실행합니다.
-              </p>
-              <div className="ml-step-nav" style={{ marginTop: 12 }}>
+                  <strong>single-site extraction</strong>
+                  <span>먼저 선택한 관측소의 곡선을 생성합니다.</span>
+                </div>
+                <p className="hint">
+                이 단계에서는 <strong>{siteLabel}</strong>의 실제 cutout만 사용합니다.
+                {' '}
+                reference는 <strong>{currentReferenceFrameIndex !== null ? `Frame #${currentReferenceFrameIndex + 1}` : 'Auto'}</strong>,
+                {' '}
+                추출 모드는 <strong>{extractionModeLabel(extractionMode)}</strong>입니다.
+                </p>
+                <div className="ml-step-nav" style={{ marginTop: 12 }}>
                 <button className="btn-primary" onClick={() => void handleGenerateSingleSiteCurve()}>
                   {siteLabel} curve 생성
                 </button>
@@ -1093,6 +1251,11 @@ export function KmtnetLab({
                   <strong>Single-site curve</strong>
                   <span>{siteLabel} cutout에서 추출한 실제 sampled 곡선</span>
                 </div>
+                {singleSiteCurve.warnings.length > 0 && (
+                  <div className="transit-callout" style={{ marginBottom: 12 }}>
+                    {singleSiteCurve.warnings.join(' ')}
+                  </div>
+                )}
                 <PlotPanel
                   lcData={singleSiteCurve}
                   showSites={[siteId]}
@@ -1124,6 +1287,48 @@ export function KmtnetLab({
             </p>
           </div>
 
+          <div className="ml-lightcurve-card">
+            <div className="ml-lightcurve-card-head">
+              <strong>Merge 설정</strong>
+              <span>비교할 관측소와 샘플 밀도를 직접 선택합니다.</span>
+            </div>
+            <div className="record-checkbox-group">
+              {ALL_SITES.map((site) => (
+                <label key={site} className="record-choice-row">
+                  <input
+                    type="checkbox"
+                    checked={mergeSites.includes(site)}
+                    onChange={() => toggleMergeSite(site)}
+                  />
+                  <span>{SITE_LABELS[site]}</span>
+                </label>
+              ))}
+            </div>
+            <div className="record-radio-group" style={{ marginTop: 12 }}>
+              <label className="record-choice-row">
+                <input
+                  type="radio"
+                  name="kmt-merge-mode"
+                  checked={extractionMode === 'quick'}
+                  onChange={() => setExtractionMode('quick')}
+                />
+                <span>Quick sampled extraction</span>
+              </label>
+              <label className="record-choice-row">
+                <input
+                  type="radio"
+                  name="kmt-merge-mode"
+                  checked={extractionMode === 'detailed'}
+                  onChange={() => setExtractionMode('detailed')}
+                />
+                <span>Detailed sampled extraction</span>
+              </label>
+            </div>
+            <p className="hint">
+              선택된 사이트: <strong>{mergeSites.length > 0 ? mergeSites.map((site) => SITE_LABELS[site]).join(', ') : '없음'}</strong>
+            </p>
+          </div>
+
           {!singleSiteCurve && (
             <p className="hint">Step 4에서 선택한 관측소의 곡선을 먼저 생성해야 합니다.</p>
           )}
@@ -1148,7 +1353,7 @@ export function KmtnetLab({
                 먼저 만든 <strong>{siteLabel}</strong> 곡선은 유지되고, 여기서 전체 KMTNet 네트워크 곡선을 추가로 생성합니다.
               </p>
               <div className="ml-step-nav" style={{ marginTop: 12 }}>
-                <button className="btn-primary" onClick={() => void handleGenerateMergedCurve()}>
+                <button className="btn-primary" disabled={!canRunMergedCurve} onClick={() => void handleGenerateMergedCurve()}>
                   Network curve 생성
                 </button>
               </div>
@@ -1159,13 +1364,27 @@ export function KmtnetLab({
 
           {singleSiteCurve && mergedCurve && (
             <>
+              {mergeIsIncomplete && (
+                <div className="transit-callout" style={{ marginBottom: 12 }}>
+                  Incomplete merge. Missing sites:
+                  {' '}
+                  {mergedCurveMissingSites.map((site) => SITE_LABELS[site] ?? site.toUpperCase()).join(', ')}.
+                  {' '}
+                  이 상태에서는 fit을 막습니다.
+                </div>
+              )}
+              {mergedCurve.warnings.length > 0 && (
+                <div className="transit-callout" style={{ marginBottom: 12 }}>
+                  {mergedCurve.warnings.join(' ')}
+                </div>
+              )}
               <div className="ml-network-legend">
                 <div className="ml-network-legend-item">
                   <span className="ml-legend-dot" style={{ background: SITE_COLORS[siteId] }} />
                   <span>{siteLabel}</span>
                   <span className="ml-legend-pts">{singlePts.length}개</span>
                 </div>
-                {ALL_SITES.map((s) => (
+                {mergedCurve.included_sites.map((s) => (
                   <div key={s} className="ml-network-legend-item">
                     <span className="ml-legend-dot" style={{ background: SITE_COLORS[s] }} />
                     <span>{SITE_LABELS[s]}</span>
@@ -1193,7 +1412,7 @@ export function KmtnetLab({
                   </div>
                   <PlotPanel
                     lcData={mergedCurve}
-                    showSites={ALL_SITES}
+                    showSites={mergedCurve.included_sites}
                     targetName={`${target.name} — KMTNet`}
                   />
                 </div>
@@ -1205,7 +1424,7 @@ export function KmtnetLab({
 
           <div className="ml-step-nav">
             <button className="btn-secondary" onClick={() => goTo('extract')}>← 이전</button>
-            <button className="btn-primary" onClick={() => goTo('fit')} disabled={!mergedCurve || mergedLoading}>
+            <button className="btn-primary" onClick={() => goTo('fit')} disabled={!mergedCurve || mergedLoading || !mergedCurve.is_complete}>
               다음: Paczyński 모델 적합 →
             </button>
           </div>
@@ -1237,19 +1456,26 @@ export function KmtnetLab({
           </div>
 
           {mergedCurve ? (
-            <PlotPanel
-              lcData={mergedCurve}
-              showSites={ALL_SITES}
-              fitResult={fitResult}
-              targetName={target.name}
-            />
+            <>
+              {mergedCurve.warnings.length > 0 && (
+                <div className="transit-callout" style={{ marginBottom: 12 }}>
+                  {mergedCurve.warnings.join(' ')}
+                </div>
+              )}
+              <PlotPanel
+                lcData={mergedCurve}
+                showSites={mergedCurve.included_sites}
+                fitResult={fitResult}
+                targetName={target.name}
+              />
+            </>
           ) : (
             <p className="hint">Step 5에서 network-merged curve를 먼저 생성해야 적합을 실행할 수 있습니다.</p>
           )}
 
           <div className="ml-fit-controls">
             {!fitResult ? (
-              <button className="btn-primary" onClick={handleFit} disabled={fitting || !mergedCurve}>
+              <button className="btn-primary" onClick={handleFit} disabled={fitting || !mergedCurve || !mergedCurve.is_complete}>
                 {fitting ? '적합 실행 중...' : 'Paczyński 모델 적합 실행'}
               </button>
             ) : (
@@ -1261,6 +1487,11 @@ export function KmtnetLab({
               </>
             )}
             {error && <p className="error-message">{error}</p>}
+            {mergedCurve && !mergedCurve.is_complete && (
+              <p className="error-message">
+                merge가 불완전합니다. 누락된 사이트를 정리한 뒤 다시 생성해야 fit을 실행할 수 있습니다.
+              </p>
+            )}
           </div>
 
           {fitResult && (
@@ -1521,6 +1752,10 @@ export function KmtnetLab({
                       site_id: siteId,
                       site_label: siteLabel,
                       frame_count: mergedCurve?.points.length ?? 0,
+                      extraction_mode: extractionMode,
+                      merge_sites: mergeSites,
+                      reference_frame_index: referenceFrameIndex,
+                      reference_observation_id: preview?.reference_observation_id ?? null,
                       light_curve: mergedCurve,
                       single_site_curve: singleSiteCurve,
                       merged_curve: mergedCurve,

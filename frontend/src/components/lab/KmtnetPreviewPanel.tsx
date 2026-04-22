@@ -149,6 +149,7 @@ export function KmtnetPreviewPanel({
         </span>
         <span>
           차분영상에서는 정렬된 현재 프레임과 reference를 비교하므로, 변하지 않는 별이 대부분 사라지고 기준영상보다 밝아진 위치만 강하게 남습니다.
+          {preview.registration_warning ? ` ${preview.registration_warning}` : ''}
           {frameLoading ? ' 새 프레임을 불러오는 중입니다…' : ''}
         </span>
       </div>
