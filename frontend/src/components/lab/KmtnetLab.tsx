@@ -3,6 +3,7 @@ import PlotlyModule from 'plotly.js-dist-min';
 import {
   fetchMicrolensingLightcurve,
   fetchMicrolensingPreview,
+  fetchMicrolensingPreviewBundle,
   fetchMyRecordSubmission,
   fetchRecordTemplate,
   fitMicrolensingModel,
@@ -52,6 +53,35 @@ type ExtractionMode = 'quick' | 'detailed';
 
 function extractionModeLabel(mode: ExtractionMode): string {
   return mode === 'detailed' ? 'Detailed sampled extraction' : 'Quick sampled extraction';
+}
+
+function buildPreviewBundleTargetIndices(
+  frameCount: number,
+  focusFrameIndex: number,
+  referenceFrameIndex: number,
+): number[] {
+  if (frameCount <= 0) return [];
+  const limit = Math.min(10, frameCount);
+  const priority = [
+    focusFrameIndex - 2,
+    focusFrameIndex - 1,
+    focusFrameIndex,
+    focusFrameIndex + 1,
+    focusFrameIndex + 2,
+    referenceFrameIndex,
+  ];
+  const evenlySpaced = Array.from(
+    { length: limit },
+    (_, index) => Math.round((index * Math.max(frameCount - 1, 0)) / Math.max(limit - 1, 1)),
+  );
+  const selected: number[] = [];
+  for (const index of [...priority, ...evenlySpaced]) {
+    const normalized = Math.max(0, Math.min(frameCount - 1, index));
+    if (selected.includes(normalized)) continue;
+    selected.push(normalized);
+    if (selected.length >= limit) break;
+  }
+  return selected.sort((a, b) => a - b);
 }
 
 const KMT_GUIDES: Record<'field' | 'align' | 'difference' | 'extract' | 'merge' | 'fit', GuideQuestion[]> = {
@@ -592,11 +622,13 @@ export function KmtnetLab({
   const [fitting, setFitting] = useState(false);
   const [singleSiteLoading, setSingleSiteLoading] = useState(false);
   const [mergedLoading, setMergedLoading] = useState(false);
+  const [previewBundleLoading, setPreviewBundleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sitePhotoError, setSitePhotoError] = useState(false);
   const recordTemplateRequestedRef = useRef(false);
   const loadedSeedRecordIdRef = useRef<number | null>(null);
   const previewCacheRef = useRef<Map<string, MicrolensingPreviewResponse>>(new Map());
+  const previewBundleCoverageRef = useRef<Map<string, Set<number>>>(new Map());
   const workflowDefinition = useMemo(
     () => createKmtnetWorkflowDefinition({ targetId: target.id }),
     [target.id],
@@ -791,9 +823,11 @@ export function KmtnetLab({
     setReferenceFrameIndex(null);
     setPreview(null);
     setPreviewError(null);
+    setPreviewBundleLoading(false);
     setSingleSiteCurve(null);
     setMergedCurve(null);
     setFitResult(null);
+    previewBundleCoverageRef.current.clear();
   }, [siteId]);
 
   useEffect(() => {
@@ -837,26 +871,47 @@ export function KmtnetLab({
 
   useEffect(() => {
     if (!preview || !workflowHydrated) return;
-    const neighbors = [
-      preview.frame_index - 2,
-      preview.frame_index - 1,
-      preview.frame_index + 1,
-      preview.frame_index + 2,
-      ...preview.sample_frame_indices,
-    ].filter((index) => index >= 0 && index < preview.frame_count);
-    const uniqueNeighbors = Array.from(new Set(neighbors));
+    const bundleBaseKey = `${target.id}:${siteId}:${referenceFrameIndex ?? 'auto'}`;
+    const targetIndices = buildPreviewBundleTargetIndices(
+      preview.frame_count,
+      preview.frame_index,
+      preview.reference_frame_index,
+    );
+    const loadedIndices = previewBundleCoverageRef.current.get(bundleBaseKey) ?? new Set<number>();
+    const isCovered = targetIndices.every((index) => loadedIndices.has(index));
+    if (isCovered) return;
 
-    uniqueNeighbors.forEach((neighborIndex) => {
-      const cacheKey = `${target.id}:${siteId}:${neighborIndex}:${referenceFrameIndex ?? 'auto'}`;
-      if (previewCacheRef.current.has(cacheKey)) return;
-      void fetchMicrolensingPreview(target.id, siteId, neighborIndex, 64, referenceFrameIndex)
-        .then((response) => {
-          previewCacheRef.current.set(cacheKey, response);
-        })
-        .catch(() => {
-          // Ignore prefetch failures; the foreground request will surface real errors.
+    let cancelled = false;
+    setPreviewBundleLoading(true);
+    void fetchMicrolensingPreviewBundle(
+      target.id,
+      siteId,
+      preview.frame_index,
+      64,
+      referenceFrameIndex,
+    )
+      .then((bundle) => {
+        if (cancelled) return;
+        const coverage = previewBundleCoverageRef.current.get(bundleBaseKey) ?? new Set<number>();
+        bundle.bundle_frame_indices.forEach((frameIndex) => coverage.add(frameIndex));
+        previewBundleCoverageRef.current.set(bundleBaseKey, coverage);
+        bundle.previews.forEach((bundlePreview) => {
+          const cacheKey = `${target.id}:${siteId}:${bundlePreview.frame_index}:${referenceFrameIndex ?? 'auto'}`;
+          previewCacheRef.current.set(cacheKey, bundlePreview);
         });
-    });
+      })
+      .catch(() => {
+        // Ignore bundle prefetch failures; the foreground request will surface real errors.
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPreviewBundleLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [preview, referenceFrameIndex, siteId, target.id, workflowHydrated]);
 
   useEffect(() => {
@@ -1034,6 +1089,7 @@ export function KmtnetLab({
             />
           )}
           {previewLoading && !preview && <p className="hint">KMT preview를 생성하는 중...</p>}
+          {preview && previewBundleLoading && <p className="hint">대표 frame bundle을 캐시하는 중...</p>}
           {previewError && <p className="error-message">{previewError}</p>}
 
           <StepGuide questions={KMT_GUIDES.field} storageKey="easwa_kmt_guide_field" />
@@ -1104,6 +1160,7 @@ export function KmtnetLab({
             />
           )}
           {previewLoading && !preview && <p className="hint">KMT 정렬 preview를 생성하는 중...</p>}
+          {preview && previewBundleLoading && <p className="hint">정렬 비교용 frame bundle을 캐시하는 중...</p>}
           {previewError && <p className="error-message">{previewError}</p>}
 
           <StepGuide questions={KMT_GUIDES.align} storageKey="easwa_kmt_guide_align" />
@@ -1145,6 +1202,7 @@ export function KmtnetLab({
             />
           )}
           {previewLoading && !preview && <p className="hint">KMT preview를 생성하는 중...</p>}
+          {preview && previewBundleLoading && <p className="hint">difference 비교용 frame bundle을 캐시하는 중...</p>}
           {previewError && <p className="error-message">{previewError}</p>}
 
           <StepGuide questions={KMT_GUIDES.difference} storageKey="easwa_kmt_guide_difference" />

@@ -19,6 +19,7 @@ from schemas.microlensing import (
     MicrolensingFitResponse,
     MicrolensingModelPoint,
     MicrolensingPixelCoordinate,
+    MicrolensingPreviewBundleResponse,
     MicrolensingPreviewFrameMetadata,
     MicrolensingPreviewResponse,
 )
@@ -213,6 +214,22 @@ def get_preview(
         target_id,
         site=site,
         frame_index=frame_index,
+        size_px=size_px,
+        reference_frame_index=reference_frame_index,
+    )
+
+
+def get_preview_bundle(
+    target_id: str,
+    site: str,
+    focus_frame_index: int | None = None,
+    size_px: int = _DEFAULT_PREVIEW_CUTOUT_SIZE_PX,
+    reference_frame_index: int | None = None,
+) -> MicrolensingPreviewBundleResponse:
+    return kmtnet_actual_service.get_preview_bundle(
+        target_id,
+        site=site,
+        focus_frame_index=focus_frame_index,
         size_px=size_px,
         reference_frame_index=reference_frame_index,
     )

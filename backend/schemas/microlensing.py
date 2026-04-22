@@ -105,3 +105,12 @@ class MicrolensingPreviewResponse(BaseModel):
     aligned_image_data_url: str
     reference_image_data_url: str
     difference_image_data_url: str
+
+
+class MicrolensingPreviewBundleResponse(BaseModel):
+    target_id: str
+    site: str
+    focus_frame_index: int
+    reference_frame_index: int
+    bundle_frame_indices: list[int]
+    previews: list[MicrolensingPreviewResponse]

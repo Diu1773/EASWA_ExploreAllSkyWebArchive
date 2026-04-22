@@ -4,6 +4,7 @@ from schemas.microlensing import (
     MicrolensingLightCurveResponse,
     MicrolensingFitRequest,
     MicrolensingFitResponse,
+    MicrolensingPreviewBundleResponse,
     MicrolensingPreviewResponse,
 )
 from services import microlensing_service
@@ -63,6 +64,30 @@ def get_microlensing_preview(
             target_id,
             site=site,
             frame_index=frame_index,
+            size_px=size_px,
+            reference_frame_index=reference_frame_index,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/kmtnet/preview-bundle/{target_id}", response_model=MicrolensingPreviewBundleResponse)
+def get_microlensing_preview_bundle(
+    target_id: str,
+    site: str = Query(..., description="Site id: ctio, saao, sso"),
+    focus_frame_index: int | None = Query(default=None, ge=0, description="Focus frame index"),
+    reference_frame_index: int | None = Query(
+        default=None,
+        ge=0,
+        description="Optional manual reference frame index.",
+    ),
+    size_px: int = Query(default=64, ge=48, le=96, description="Actual cutout size in pixels"),
+):
+    try:
+        return microlensing_service.get_preview_bundle(
+            target_id,
+            site=site,
+            focus_frame_index=focus_frame_index,
             size_px=size_px,
             reference_frame_index=reference_frame_index,
         )

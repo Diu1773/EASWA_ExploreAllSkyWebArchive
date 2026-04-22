@@ -25,6 +25,7 @@ from schemas.microlensing import (
     MicrolensingLightCurveResponse,
     MicrolensingPixelCoordinate,
     MicrolensingPoint,
+    MicrolensingPreviewBundleResponse,
     MicrolensingPreviewFrameMetadata,
     MicrolensingPreviewResponse,
 )
@@ -53,6 +54,8 @@ _REGISTRATION_MAX_SHIFT_PX = 5
 _SITE_LIGHTCURVE_WORKERS = 4
 _MERGED_LIGHTCURVE_WORKERS = 3
 _DEFAULT_EXTRACTION_MODE = "quick"
+_PREVIEW_BUNDLE_LIMIT = 10
+_PREVIEW_BUNDLE_WORKERS = 4
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +336,28 @@ def get_preview(
     )
 
 
+def get_preview_bundle(
+    target_id: str,
+    site: str,
+    focus_frame_index: int | None = None,
+    size_px: int = _DEFAULT_CUTOUT_SIZE_PX,
+    reference_frame_index: int | None = None,
+) -> MicrolensingPreviewBundleResponse:
+    site_key = _normalize_site_key(site)
+    rows = _list_rows(target_id, site_key)
+    if not rows:
+        raise ValueError(f"No KMTNet observations available for {target_id} at {site_key}.")
+    resolved_focus_frame_index = 0 if focus_frame_index is None else int(focus_frame_index)
+    reference_observation_id = _resolve_reference_request(target_id, site_key, reference_frame_index)
+    return _get_preview_bundle_cached(
+        target_id,
+        site_key,
+        max(0, min(len(rows) - 1, resolved_focus_frame_index)),
+        int(size_px),
+        reference_observation_id or "__auto__",
+    )
+
+
 @lru_cache(maxsize=256)
 def _get_preview_cached(
     target_id: str,
@@ -456,6 +481,75 @@ def _get_preview_cached(
         aligned_image_data_url=_encode_intensity_image(aligned_frame.raw_data),
         reference_image_data_url=_encode_intensity_image(reference_frame.raw_data),
         difference_image_data_url=_encode_difference_image(difference_frame),
+    )
+
+
+@lru_cache(maxsize=96)
+def _get_preview_bundle_cached(
+    target_id: str,
+    site_key: str,
+    focus_frame_index: int,
+    size_px: int,
+    reference_observation_id_token: str,
+) -> MicrolensingPreviewBundleResponse:
+    rows = _list_rows(target_id, site_key)
+    if not rows:
+        raise ValueError(f"No KMTNet observations available for {target_id} at {site_key}.")
+
+    resolved_focus_frame_index = max(0, min(len(rows) - 1, int(focus_frame_index)))
+    reference_row = _resolve_reference_row(
+        target_id,
+        site_key,
+        _normalize_cutout_size(size_px),
+        None if reference_observation_id_token == "__auto__" else reference_observation_id_token,
+    )
+    reference_frame_index = next(
+        (index for index, row in enumerate(rows) if row["id"] == reference_row["id"]),
+        0,
+    )
+    bundle_frame_indices = _preview_bundle_indices(
+        frame_count=len(rows),
+        focus_frame_index=resolved_focus_frame_index,
+        reference_frame_index=reference_frame_index,
+    )
+
+    previews: list[MicrolensingPreviewResponse] = []
+    with ThreadPoolExecutor(max_workers=min(len(bundle_frame_indices), _PREVIEW_BUNDLE_WORKERS)) as executor:
+        futures = {
+            executor.submit(
+                _get_preview_cached,
+                target_id,
+                site_key,
+                frame_index,
+                _normalize_cutout_size(size_px),
+                reference_observation_id_token,
+            ): frame_index
+            for frame_index in bundle_frame_indices
+        }
+        for future in as_completed(futures):
+            frame_index = futures[future]
+            try:
+                previews.append(future.result())
+            except Exception as error:
+                logger.warning(
+                    "Skipping KMT preview bundle frame %s for %s/%s: %s",
+                    frame_index,
+                    target_id,
+                    site_key,
+                    error,
+                )
+
+    previews.sort(key=lambda preview: preview.frame_index)
+    if not previews:
+        raise ValueError(f"No KMTNet preview bundle could be created for {target_id}/{site_key}.")
+
+    return MicrolensingPreviewBundleResponse(
+        target_id=target_id,
+        site=site_key,
+        focus_frame_index=resolved_focus_frame_index,
+        reference_frame_index=reference_frame_index,
+        bundle_frame_indices=bundle_frame_indices,
+        previews=previews,
     )
 
 
@@ -848,6 +942,38 @@ def _sample_frame_indices(frame_count: int) -> list[int]:
         return []
     anchors = [0, frame_count // 4, frame_count // 2, (3 * frame_count) // 4, frame_count - 1]
     return list(dict.fromkeys(max(0, min(frame_count - 1, value)) for value in anchors))
+
+
+def _preview_bundle_indices(
+    frame_count: int,
+    focus_frame_index: int,
+    reference_frame_index: int,
+) -> list[int]:
+    if frame_count <= 0:
+        return []
+
+    priority_indices = [
+        focus_frame_index - 2,
+        focus_frame_index - 1,
+        focus_frame_index,
+        focus_frame_index + 1,
+        focus_frame_index + 2,
+        reference_frame_index,
+    ]
+    evenly_spaced = [
+        int(round(value))
+        for value in np.linspace(0, frame_count - 1, min(_PREVIEW_BUNDLE_LIMIT, frame_count))
+    ]
+    ordered_indices = priority_indices + evenly_spaced
+    selected: list[int] = []
+    for index in ordered_indices:
+        normalized = max(0, min(frame_count - 1, index))
+        if normalized in selected:
+            continue
+        selected.append(normalized)
+        if len(selected) >= min(_PREVIEW_BUNDLE_LIMIT, frame_count):
+            break
+    return sorted(selected)
 
 
 def _download_fits_bytes(url: str) -> bytes:

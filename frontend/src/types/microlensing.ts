@@ -103,3 +103,12 @@ export interface MicrolensingPreviewResponse {
   reference_image_data_url: string;
   difference_image_data_url: string;
 }
+
+export interface MicrolensingPreviewBundleResponse {
+  target_id: string;
+  site: string;
+  focus_frame_index: number;
+  reference_frame_index: number;
+  bundle_frame_indices: number[];
+  previews: MicrolensingPreviewResponse[];
+}

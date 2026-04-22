@@ -32,6 +32,7 @@ import type {
   MicrolensingLightCurveResponse,
   MicrolensingFitRequest,
   MicrolensingFitResponse,
+  MicrolensingPreviewBundleResponse,
   MicrolensingPreviewResponse,
 } from '../types/microlensing';
 
@@ -482,6 +483,26 @@ export async function fetchMicrolensingPreview(
     params.set('reference_frame_index', String(referenceFrameIndex));
   }
   return get(`/kmtnet/preview/${encodeURIComponent(targetId)}?${params.toString()}`);
+}
+
+export async function fetchMicrolensingPreviewBundle(
+  targetId: string,
+  site: string,
+  focusFrameIndex?: number | null,
+  sizePx = 64,
+  referenceFrameIndex?: number | null,
+): Promise<MicrolensingPreviewBundleResponse> {
+  const params = new URLSearchParams({
+    site,
+    size_px: String(sizePx),
+  });
+  if (focusFrameIndex !== undefined && focusFrameIndex !== null) {
+    params.set('focus_frame_index', String(focusFrameIndex));
+  }
+  if (referenceFrameIndex !== undefined && referenceFrameIndex !== null) {
+    params.set('reference_frame_index', String(referenceFrameIndex));
+  }
+  return get(`/kmtnet/preview-bundle/${encodeURIComponent(targetId)}?${params.toString()}`);
 }
 
 export async function fitMicrolensingModel(
