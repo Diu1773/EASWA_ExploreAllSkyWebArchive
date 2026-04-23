@@ -280,7 +280,7 @@ def _build_transit_photometry_request(record: dict[str, Any]) -> TransitPhotomet
     return TransitPhotometryRequest(
         target_id=str(record["target_id"]),
         observation_id=observation_id,
-        cutout_size_px=int(context.get("field_size_px") or 35),
+        cutout_size_px=int(context.get("field_size_px") or 50),
         target_context=target_context,
         observation_context=observation_context,
         target_position=target_position,

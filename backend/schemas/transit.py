@@ -76,7 +76,7 @@ class TransitObservationContext(BaseModel):
 class TransitPhotometryRequest(BaseModel):
     target_id: str
     observation_id: str
-    cutout_size_px: int = 35
+    cutout_size_px: int = 50
     preview_dataset_token: str | None = None
     target_context: TransitTargetContext | None = None
     observation_context: TransitObservationContext | None = None

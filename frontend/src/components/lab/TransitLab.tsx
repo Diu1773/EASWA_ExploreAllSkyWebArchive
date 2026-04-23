@@ -310,8 +310,9 @@ function StepGuide({
   );
 }
 
+const DEFAULT_TRANSIT_CUTOUT_SIZE_PX = 50;
 const DEV_CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99] as const;
-const PROD_CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45] as const;
+const PROD_CUTOUT_SIZE_OPTIONS = [30, 35, 40, 45, 50] as const;
 const CUTOUT_SIZE_OPTIONS =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
@@ -758,11 +759,13 @@ export function TransitLab({
           selectAllObservations(observationIds);
         }
         restoringSessionPreviewRef.current =
-          observationIds.length > 0 && (payload.context?.field_size_px ?? 35) !== null;
+          observationIds.length > 0 &&
+          (payload.context?.field_size_px ?? DEFAULT_TRANSIT_CUTOUT_SIZE_PX) !== null;
         patch({
           activeObservationId: observationIds.length > 0 ? observationIds[0] : null,
-          cutoutSizePx: payload.context?.field_size_px ?? 35,
-          pendingCutoutSizePx: payload.context?.field_size_px ?? 35,
+          cutoutSizePx: payload.context?.field_size_px ?? DEFAULT_TRANSIT_CUTOUT_SIZE_PX,
+          pendingCutoutSizePx:
+            payload.context?.field_size_px ?? DEFAULT_TRANSIT_CUTOUT_SIZE_PX,
           selectedFrameIndex: null,
           targetPositionOffset: payload.context?.target_position ?? null,
           comparisonStars:
@@ -1022,6 +1025,22 @@ export function TransitLab({
         stars.findIndex((candidate) => arePixelPositionsNear(candidate.pixel, star.pixel)) ===
         index
     );
+  const ticCatalogStars = preview?.tic_stars ?? [];
+  const otherTicStars = ticCatalogStars.filter((star) => !star.recommended);
+  const effectiveCutoutSizePx =
+    preview?.cutout_size_px ??
+    cutoutSizePx ??
+    pendingCutoutSizePx ??
+    DEFAULT_TRANSIT_CUTOUT_SIZE_PX;
+  const shouldSuggestWiderCutout = effectiveCutoutSizePx < DEFAULT_TRANSIT_CUTOUT_SIZE_PX;
+  const ticCatalogStatusMessage =
+    ticCatalogStars.length === 0
+      ? shouldSuggestWiderCutout
+        ? `No TIC stars were found in this ${effectiveCutoutSizePx}px field. Reload with ${DEFAULT_TRANSIT_CUTOUT_SIZE_PX}px to search a wider area.`
+        : 'No TIC stars were found in this field. You can still add comparison stars manually from the image.'
+      : recommendedComparisonStars.length === 0
+        ? 'TIC stars were found, but none met the recommendation filter. Select from the list below or add stars manually.'
+        : null;
 
   // Get the aperture for the currently selected star
   const getSelectedAperture = (): ApertureParams => {
@@ -1193,7 +1212,10 @@ export function TransitLab({
 
     const submissionSector = preview?.sector ?? activeObservation?.sector ?? result.sector;
     const submissionFieldSizePx =
-      preview?.cutout_size_px ?? cutoutSizePx ?? pendingCutoutSizePx ?? 35;
+      preview?.cutout_size_px ??
+      cutoutSizePx ??
+      pendingCutoutSizePx ??
+      DEFAULT_TRANSIT_CUTOUT_SIZE_PX;
     const submissionTargetPosition =
       effectiveTargetPosition ?? targetPositionOffset ?? result.target_position ?? null;
     const submissionObservationContext =
@@ -1693,7 +1715,7 @@ export function TransitLab({
             </div>
 
             {/* TIC recommended comparisons */}
-            {preview && (preview.tic_stars?.length ?? 0) > 0 && (
+            {preview && (
               <div className="transit-controls-card">
                 <div className="transit-controls-card-header">
                   <h4>TIC Catalog Stars</h4>
@@ -1701,6 +1723,7 @@ export function TransitLab({
                     type="button"
                     className={`btn-sm ${showTicMarkers ? 'active' : ''}`}
                     onClick={() => dispatch({ type: 'update', updater: (s) => ({ showTicMarkers: !s.showTicMarkers }) })}
+                    disabled={ticCatalogStars.length === 0}
                     title="이미지에 TIC 별 마커 표시"
                   >
                     {showTicMarkers ? 'Hide markers' : 'Show markers'}
@@ -1710,6 +1733,11 @@ export function TransitLab({
                   Bright stars from TESS Input Catalog in the field of view.
                   Recommended stars are non-variable and bright.
                 </p>
+                {ticCatalogStatusMessage && (
+                  <p className="hint" style={{ marginBottom: 10 }}>
+                    {ticCatalogStatusMessage}
+                  </p>
+                )}
                 <div className="transit-tic-list">
                   {recommendedComparisonStars.map((star) => (
                       <button
@@ -1735,14 +1763,12 @@ export function TransitLab({
                         </span>
                       </button>
                     ))}
-                  {preview.tic_stars!.filter((s) => !s.recommended).length > 0 && (
+                  {otherTicStars.length > 0 && (
                     <details className="transit-tic-others">
                       <summary>
-                        {preview.tic_stars!.filter((s) => !s.recommended).length} other stars
+                        {otherTicStars.length} other stars
                       </summary>
-                      {preview.tic_stars!
-                        .filter((s) => !s.recommended)
-                        .map((star) => (
+                      {otherTicStars.map((star) => (
                           <button
                             key={star.tic_id}
                             className="transit-star-row"

@@ -32,7 +32,7 @@ def get_cutout_preview(
     request: Request,
     target_id: str,
     observation_id: str,
-    size_px: int = Query(default=35, ge=30, le=99),
+    size_px: int = Query(default=50, ge=30, le=99),
     frame_index: int | None = Query(default=None, ge=0),
 ):
     enforce_rate_limit(request, "transit_preview_inline")
@@ -60,7 +60,7 @@ def create_cutout_preview_job(
     request: Request,
     target_id: str,
     observation_id: str,
-    size_px: int = Query(default=35, ge=30, le=99),
+    size_px: int = Query(default=50, ge=30, le=99),
     frame_index: int | None = Query(default=None, ge=0),
 ):
     enforce_rate_limit(request, "transit_preview_job")

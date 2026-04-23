@@ -20,6 +20,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 export type StarKey = 'T' | `C${number}`;
+const DEFAULT_TRANSIT_CUTOUT_SIZE_PX = 50;
 
 export interface ComparisonStar {
   position: PixelCoordinate;
@@ -163,7 +164,7 @@ export function createInitialTransitLabState(
   return {
     activeObservationId: null,
     cutoutSizePx: null,
-    pendingCutoutSizePx: 35,
+    pendingCutoutSizePx: DEFAULT_TRANSIT_CUTOUT_SIZE_PX,
     selectedFrameIndex: null,
     targetAperture: { ...defaults.aperture },
     targetPositionOffset: null,
@@ -246,7 +247,7 @@ export function transitLabReducer(
         // Then apply persisted fields from snapshot
         activeObservationId: saved.activeObservationId,
         cutoutSizePx: resumeFromSelect ? null : saved.cutoutSizePx,
-        pendingCutoutSizePx: saved.cutoutSizePx ?? 35,
+        pendingCutoutSizePx: saved.cutoutSizePx ?? DEFAULT_TRANSIT_CUTOUT_SIZE_PX,
         selectedFrameIndex: resumeFromSelect ? null : saved.selectedFrameIndex,
         targetAperture: saved.targetAperture,
         targetPositionOffset: resumeFromSelect ? null : saved.targetPositionOffset,
@@ -326,7 +327,7 @@ export function transitLabReducer(
       }
       if (resolution.resetCutoutSetup) {
         next.cutoutSizePx = null;
-        next.pendingCutoutSizePx = 35;
+        next.pendingCutoutSizePx = DEFAULT_TRANSIT_CUTOUT_SIZE_PX;
       }
       if (resolution.resetTargetAperture) {
         next.targetAperture = { ...defaults.aperture };

@@ -59,7 +59,7 @@ from schemas.transit import (
 _MAST_TIC_URL = "https://mast.stsci.edu/api/v0/invoke"
 
 _TESSCUT_ASTROCUT_URL = "https://mast.stsci.edu/tesscut/api/v0.1/astrocut"
-_DEFAULT_CUTOUT_SIZE_PX = 35
+_DEFAULT_CUTOUT_SIZE_PX = 50
 _FRAME_COUNT_LOOKUP_SIZE_PX = 1
 _ALLOWED_CUTOUT_SIZES_PX = tuple(
     size for size in (30, 35, 40, 45, 50, 55, 60, 70, 80, 90, 99) if size <= TRANSIT_MAX_CUTOUT_SIZE_PX
