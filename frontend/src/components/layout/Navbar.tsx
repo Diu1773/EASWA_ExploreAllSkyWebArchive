@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { buildExplorerHref } from '../../utils/explorerNavigation';
+
+interface NavLinkItem {
+  to: string;
+  label: string;
+  active: boolean;
+}
 
 function LogoIcon() {
   return (
@@ -27,31 +34,55 @@ function LogoIcon() {
 
 export function Navbar() {
   const location = useLocation();
+  const moduleParam = new URLSearchParams(location.search).get('module');
+  const isKmtnetContext =
+    location.pathname.startsWith('/kmtnet') ||
+    moduleParam === 'kmtnet';
+  const isExplorerContext =
+    (location.pathname === '/explorer' ||
+      location.pathname.startsWith('/target') ||
+      location.pathname.startsWith('/lab')) &&
+    !isKmtnetContext;
+  const defaultExplorerHref = buildExplorerHref({
+    moduleId: 'tess',
+    topicId: 'exoplanet_transit',
+    siteId: null,
+  });
   const user = useAuthStore((s) => s.user);
   const loading = useAuthStore((s) => s.loading);
   const logout = useAuthStore((s) => s.logout);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
 
-  // Close menu when clicking outside
+  const navLinks: NavLinkItem[] = [
+    { to: '/', label: 'Home', active: location.pathname === '/' },
+    { to: defaultExplorerHref, label: 'Explorer', active: isExplorerContext },
+    { to: '/tess', label: 'TESS', active: location.pathname.startsWith('/tess') },
+    { to: '/kmtnet', label: 'KMTNet', active: isKmtnetContext },
+  ];
+
+  // Close menus when clicking outside
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !mobileNavOpen) return;
     const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
+        setMobileNavOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [menuOpen]);
+  }, [menuOpen, mobileNavOpen]);
 
-  // Close menu on route change
+  // Close menus on route change
   useEffect(() => {
     setMenuOpen(false);
+    setMobileNavOpen(false);
   }, [location.pathname]);
 
   return (
-    <nav className="navbar">
+    <nav className={`navbar ${mobileNavOpen ? 'mobile-open' : ''}`} ref={navRef}>
       <Link to="/" className="navbar-brand">
         <LogoIcon />
         <div className="navbar-brand-copy">
@@ -59,12 +90,27 @@ export function Navbar() {
           <span className="navbar-subtitle">Exploring All-Sky Web Application</span>
         </div>
       </Link>
+
+      <button
+        type="button"
+        className={`navbar-menu-toggle ${mobileNavOpen ? 'open' : ''}`}
+        onClick={() => setMobileNavOpen((prev) => !prev)}
+        aria-label="탐색 메뉴"
+        aria-expanded={mobileNavOpen}
+      >
+        <span />
+        <span />
+        <span />
+      </button>
+
       <div className="navbar-links">
-        <Link to="/" className={location.pathname === '/' ? 'active' : ''}>
-          Sky Explorer
-        </Link>
+        {navLinks.map((item) => (
+          <Link key={item.label} to={item.to} className={item.active ? 'active' : ''}>
+            {item.label}
+          </Link>
+        ))}
       </div>
-      <div className="navbar-auth" ref={menuRef}>
+      <div className="navbar-auth">
         {loading ? null : user ? (
           <>
             <button
@@ -133,7 +179,8 @@ export function Navbar() {
           </>
         ) : (
           <a href="/api/auth/login" className="btn-sm navbar-login">
-            Sign in with Google
+            <span className="navbar-login-label">Sign in</span>
+            <span className="navbar-login-provider">with Google</span>
           </a>
         )}
       </div>

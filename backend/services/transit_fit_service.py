@@ -35,6 +35,16 @@ except Exception as error:
     _EMCEE_IMPORT_ERROR = str(error).strip() or error.__class__.__name__
     logger.warning("emcee import failed: %s", _EMCEE_IMPORT_ERROR)
 
+try:
+    import meidem
+
+    _HAS_MEIDEM = True
+    _MEIDEM_IMPORT_ERROR: str | None = None
+except Exception as error:
+    _HAS_MEIDEM = False
+    _MEIDEM_IMPORT_ERROR = str(error).strip() or error.__class__.__name__
+    logger.warning("meidem import failed: %s", _MEIDEM_IMPORT_ERROR)
+
 from schemas.lightcurve import LightCurvePoint
 from schemas.transit_fit import (
     TransitFitParameters,
@@ -72,6 +82,10 @@ def get_runtime_dependency_status() -> dict[str, dict[str, str | bool | None]]:
         "emcee": {
             "available": _HAS_EMCEE,
             "error": _EMCEE_IMPORT_ERROR,
+        },
+        "meidem": {
+            "available": _HAS_MEIDEM,
+            "error": _MEIDEM_IMPORT_ERROR,
         },
     }
 
@@ -138,6 +152,25 @@ _FILTER_LD_BASES: dict[str, tuple[float, float]] = {
     "2mass_j": (0.18, 0.22),
     "2mass_h": (0.14, 0.20),
     "2mass_ks": (0.11, 0.18),
+}
+
+_MEIDEM_QUADRATIC_CONFIG: dict[str, dict[str, Any]] = {
+    "TESS": {
+        "passband": "TESS",
+        "grid": "claret2017",
+        "law": "quadratic",
+        "mod": "A",
+        "met": "L",
+        "xi": 2.0,
+        "source": "meidem_claret2017_quadratic",
+    },
+    "Kepler": {
+        "passband": "Kp",
+        "grid": "claret2011",
+        "law": "quadratic",
+        "xi": 2.0,
+        "source": "meidem_claret2011_quadratic",
+    },
 }
 
 
@@ -229,6 +262,15 @@ def _resolve_quadratic_limb_darkening(
         if metallicity is None:
             metallicity = archive_metallicity
 
+    meidem_solution = _resolve_tabulated_quadratic_limb_darkening(
+        resolved_filter=resolved_filter,
+        teff=teff,
+        logg=logg,
+        metallicity=metallicity,
+    )
+    if meidem_solution is not None:
+        return meidem_solution
+
     if teff is None or logg is None:
         u1, u2 = _project_quadratic_ld_to_physical(base_u1, base_u2)
         source = "filter_default" if resolved_filter in _FILTER_LD_BASES else _DEFAULT_LD_SOURCE
@@ -245,6 +287,55 @@ def _resolve_quadratic_limb_darkening(
     u2 = base_u2 - (0.02 * teff_term) + (0.01 * logg_term) + (0.01 * metallicity_term)
     u1, u2 = _project_quadratic_ld_to_physical(u1, u2)
     return u1, u2, "stellar_filter_heuristic", resolved_filter
+
+
+def _resolve_tabulated_quadratic_limb_darkening(
+    *,
+    resolved_filter: str,
+    teff: float | None,
+    logg: float | None,
+    metallicity: float | None,
+) -> tuple[float, float, str, str | None] | None:
+    if not _HAS_MEIDEM:
+        return None
+    if teff is None or logg is None or metallicity is None:
+        return None
+
+    config = _MEIDEM_QUADRATIC_CONFIG.get(resolved_filter)
+    if config is None:
+        return None
+
+    try:
+        result = meidem.get_ld_coefficients(
+            teff=float(teff),
+            logg=float(logg),
+            feh=float(metallicity),
+            passband=config["passband"],
+            grid=config["grid"],
+            law=config["law"],
+            **({"mod": config["mod"]} if "mod" in config else {}),
+            **({"met": config["met"]} if "met" in config else {}),
+            **({"xi": config["xi"]} if "xi" in config else {}),
+        )
+    except Exception as error:
+        logger.info(
+            "meidem LD lookup failed for %s (Teff=%.1f logg=%.3f [Fe/H]=%.3f): %s",
+            resolved_filter,
+            float(teff),
+            float(logg),
+            float(metallicity),
+            error,
+        )
+        return None
+
+    coefficients = result.get("coefficients")
+    if not isinstance(coefficients, (list, tuple)) or len(coefficients) != 2:
+        return None
+
+    u1, u2 = _project_quadratic_ld_to_physical(float(coefficients[0]), float(coefficients[1]))
+    source = str(config.get("source") or result.get("grid") or "meidem_quadratic")
+    filter_label = str(result.get("passband") or config["passband"])
+    return u1, u2, source, filter_label
 
 
 def fit_transit_model(

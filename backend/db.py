@@ -110,6 +110,8 @@ def _ensure_analysis_record_columns(db: sqlite3.Connection) -> None:
         return
     if "share_token" not in columns:
         db.execute("ALTER TABLE analysis_records ADD COLUMN share_token TEXT")
+        columns.add("share_token")
+    if "share_token" in columns:
         db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_records_share_token "
             "ON analysis_records (share_token) WHERE share_token IS NOT NULL"
@@ -134,6 +136,8 @@ def _ensure_analysis_draft_columns(db: sqlite3.Connection) -> None:
         )
     if "last_opened_at" not in columns:
         db.execute("ALTER TABLE analysis_drafts ADD COLUMN last_opened_at TEXT")
+        columns.add("last_opened_at")
+    if "last_opened_at" in columns:
         db.execute(
             """
             UPDATE analysis_drafts
@@ -330,6 +334,37 @@ def get_analysis_record_by_token(token: str) -> dict[str, Any] | None:
         if not row:
             return None
         return _parse_record_row(row)
+
+
+def get_guide_answer_stats() -> dict[str, Any]:
+    """Aggregate guide_answers across all records for admin dashboard."""
+    with closing(get_db()) as db:
+        rows = db.execute(
+            "SELECT payload, created_at, user_id, target_id FROM analysis_records ORDER BY created_at"
+        ).fetchall()
+
+    question_stats: dict[str, dict[str, int]] = {}
+    total_records = len(rows)
+    records_with_guide = 0
+
+    for row in rows:
+        payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else (row["payload"] or {})
+        guide_answers = payload.get("guide_answers") or {}
+        if not guide_answers:
+            continue
+        records_with_guide += 1
+        for qid, answer in guide_answers.items():
+            if not answer:
+                continue
+            if qid not in question_stats:
+                question_stats[qid] = {}
+            question_stats[qid][answer] = question_stats[qid].get(answer, 0) + 1
+
+    return {
+        "total_records": total_records,
+        "records_with_guide": records_with_guide,
+        "question_stats": question_stats,
+    }
 
 
 def upsert_analysis_draft(

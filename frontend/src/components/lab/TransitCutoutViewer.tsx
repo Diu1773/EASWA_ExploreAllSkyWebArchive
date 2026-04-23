@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { PixelCoordinate, StarOverlay, TICStarInfo, TransitCutoutPreview } from '../../types/transit';
 
 interface TransitCutoutViewerProps {
@@ -6,7 +6,6 @@ interface TransitCutoutViewerProps {
   displayCutoutSizePx?: number;
   stars: StarOverlay[];
   showTicMarkers?: boolean;
-  onToggleTicMarkers?: () => void;
   activeFrameIndex?: number | null;
   onFrameChange?: (frameIndex: number) => void;
   frameChangeDisabled?: boolean;
@@ -24,7 +23,6 @@ export function TransitCutoutViewer({
   displayCutoutSizePx,
   stars,
   showTicMarkers = false,
-  onToggleTicMarkers,
   activeFrameIndex,
   onFrameChange,
   frameChangeDisabled = false,
@@ -35,10 +33,13 @@ export function TransitCutoutViewer({
   onMoveStar,
 }: TransitCutoutViewerProps) {
   const [zoomScale, setZoomScale] = useState(1);
+  const [availableFrameWidth, setAvailableFrameWidth] = useState<number | null>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
-  // Drag state kept in refs so mousemove/mouseup listeners stay stable
-  const dragRef = useRef<{
+  // Pointer interaction state kept in refs so touch and mouse follow the same path
+  const pointerRef = useRef<{
+    pointerId: number;
     label: string;
     startScreenX: number;
     startScreenY: number;
@@ -55,6 +56,20 @@ export function TransitCutoutViewer({
   useEffect(() => {
     setZoomScale(1);
   }, [preview.observation_id, effectiveDisplaySizePx]);
+
+  useEffect(() => {
+    if (!frameRef.current) return;
+
+    const frame = frameRef.current;
+    const updateWidth = () => {
+      setAvailableFrameWidth(frame.clientWidth);
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
 
   /** Convert a screen mouse event to cutout pixel coords */
   const screenToPixel = useCallback(
@@ -89,75 +104,84 @@ export function TransitCutoutViewer({
     [stars]
   );
 
-  // --- mouse handlers ---
+  // --- pointer handlers ---
 
-  const handleMouseDown = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return; // left-click only
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
     if (!onAddComparison) return;
 
     const px = screenToPixel(event.clientX, event.clientY);
     if (!px) return;
 
     const hit = hitTestStar(px);
-    if (hit) {
-      // Start potential drag
-      dragRef.current = {
-        label: hit.label,
+    if (!hit) {
+      pointerRef.current = {
+        pointerId: event.pointerId,
+        label: '',
         startScreenX: event.clientX,
         startScreenY: event.clientY,
         dragging: false,
       };
-      onSelectStar?.(hit.label);
-      event.preventDefault();
+      return;
     }
+
+    pointerRef.current = {
+      pointerId: event.pointerId,
+      label: hit.label,
+      startScreenX: event.clientX,
+      startScreenY: event.clientY,
+      dragging: false,
+    };
+    stageRef.current?.setPointerCapture?.(event.pointerId);
+    onSelectStar?.(hit.label);
+    event.preventDefault();
   };
 
-  useEffect(() => {
-    const handleMouseMove = (e: globalThis.MouseEvent) => {
-      const drag = dragRef.current;
-      if (!drag) return;
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pointer = pointerRef.current;
+    if (!pointer || pointer.pointerId !== event.pointerId || pointer.label === '') return;
 
-      const dx = e.clientX - drag.startScreenX;
-      const dy = e.clientY - drag.startScreenY;
-
-      if (!drag.dragging) {
-        if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
-        drag.dragging = true;
-      }
-
-      const px = screenToPixel(e.clientX, e.clientY);
-      if (px) {
-        onMoveStar?.(drag.label, px);
-      }
-    };
-
-    const handleMouseUp = () => {
-      dragRef.current = null;
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [screenToPixel, onMoveStar]);
-
-  const handleClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (!onAddComparison) return;
-    // If we just finished a drag, don't add a new star
-    if (dragRef.current?.dragging) return;
+    const dx = event.clientX - pointer.startScreenX;
+    const dy = event.clientY - pointer.startScreenY;
+    if (!pointer.dragging) {
+      if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
+      pointer.dragging = true;
+    }
 
     const px = screenToPixel(event.clientX, event.clientY);
     if (!px) return;
 
-    // If clicking on an existing star, just select (already done in mousedown)
-    if (hitTestStar(px)) return;
-
-    onAddComparison(px);
+    onMoveStar?.(pointer.label, px);
+    event.preventDefault();
   };
 
-  const stageSize = Math.round(preview.preview_width_px * zoomScale);
+  const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pointer = pointerRef.current;
+    if (!pointer || pointer.pointerId !== event.pointerId) return;
+
+    if (!pointer.dragging && pointer.label === '' && onAddComparison) {
+      const px = screenToPixel(event.clientX, event.clientY);
+      if (px && !hitTestStar(px)) {
+        onAddComparison(px);
+      }
+    }
+
+    stageRef.current?.releasePointerCapture?.(event.pointerId);
+    pointerRef.current = null;
+  };
+
+  const handlePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (pointerRef.current?.pointerId === event.pointerId) {
+      stageRef.current?.releasePointerCapture?.(event.pointerId);
+      pointerRef.current = null;
+    }
+  };
+
+  const baseStageSize =
+    availableFrameWidth && availableFrameWidth > 0
+      ? Math.min(preview.preview_width_px, Math.max(220, availableFrameWidth - 16))
+      : preview.preview_width_px;
+  const stageSize = Math.round(baseStageSize * zoomScale);
   const currentFrameIndex = activeFrameIndex ?? preview.frame_index ?? 0;
   const hasMultipleFrames = preview.frame_count > 1;
   const frameMetadata = preview.frame_metadata;
@@ -236,16 +260,6 @@ export function TransitCutoutViewer({
         )}
 
         <div className="transit-cutout-zoom">
-          {(preview.tic_stars?.length ?? 0) > 0 && onToggleTicMarkers && (
-            <button
-              type="button"
-              className={`btn-sm ${showTicMarkers ? 'active' : ''}`}
-              onClick={onToggleTicMarkers}
-              title="Toggle TIC star markers"
-            >
-              TIC
-            </button>
-          )}
           <button
             type="button"
             className="btn-sm"
@@ -274,12 +288,15 @@ export function TransitCutoutViewer({
       </div>
 
       <div className="transit-cutout-layout">
-        <div className="transit-cutout-frame">
+        <div className="transit-cutout-frame" ref={frameRef}>
           <div
             ref={stageRef}
             className={`transit-cutout-stage ${onAddComparison ? 'interactive' : ''}`}
-            onMouseDown={handleMouseDown}
-            onClick={handleClick}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerCancel}
+            onLostPointerCapture={handlePointerCancel}
             onDragStart={(e) => e.preventDefault()}
             style={{ width: `${stageSize}px`, height: `${stageSize}px` }}
           >

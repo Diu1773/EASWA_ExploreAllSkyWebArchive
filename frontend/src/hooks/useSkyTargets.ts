@@ -5,6 +5,7 @@ import type { Target } from '../types/target';
 
 export function useSkyTargets() {
   const [targets, setTargets] = useState<Target[]>([]);
+  const [loading, setLoading] = useState(false);
   const selectedTopic = useAppStore((s) => s.selectedTopic);
   const transitFilters = useAppStore((s) => s.transitFilters);
 
@@ -16,6 +17,7 @@ export function useSkyTargets() {
       return () => { cancelled = true; };
     }
 
+    setLoading(true);
     fetchTargets(
       selectedTopic,
       selectedTopic === 'exoplanet_transit' ? transitFilters : undefined
@@ -28,10 +30,13 @@ export function useSkyTargets() {
           console.error('Failed to load targets', error);
           setTargets([]);
         }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
 
     return () => { cancelled = true; };
   }, [selectedTopic, transitFilters]);
 
-  return { targets, selectedTopic };
+  return { targets, loading, selectedTopic };
 }

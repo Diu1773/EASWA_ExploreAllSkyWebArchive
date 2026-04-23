@@ -8,7 +8,12 @@ import type {
 } from '../../types/transit';
 import type { TransitFitResponse } from '../../types/transitFit';
 import type { TransitInvalidationResolution } from './invalidation';
-import type { PersistedTransitLabState, TransitFitDataSource } from './definition';
+import type {
+  PersistedTransitLabState,
+  TransitFitDataSource,
+  TransitFitDisplayXAxis,
+  TransitFitDisplayYAxis,
+} from './definition';
 
 // ---------------------------------------------------------------------------
 // Shared types (previously inlined in TransitLab.tsx)
@@ -73,6 +78,8 @@ export interface TransitLabState {
   // Fit config
   fitLimbDarkening: boolean;
   fitDataSource: TransitFitDataSource;
+  fitDisplayXAxis: TransitFitDisplayXAxis;
+  fitDisplayYAxis: TransitFitDisplayYAxis;
   bjdWindowStart: number | null;
   bjdWindowEnd: number | null;
   fitWindowPhase: number;
@@ -169,6 +176,8 @@ export function createInitialTransitLabState(
     foldT0Auto: true,
     fitLimbDarkening: false,
     fitDataSource: 'bjd_window',
+    fitDisplayXAxis: 'btjd',
+    fitDisplayYAxis: 'normalized_flux',
     bjdWindowStart: null,
     bjdWindowEnd: null,
     fitWindowPhase: 0.12,
@@ -250,6 +259,8 @@ export function transitLabReducer(
         foldT0Auto: saved.foldT0Auto,
         fitLimbDarkening: saved.fitLimbDarkening,
         fitDataSource: saved.fitDataSource,
+        fitDisplayXAxis: saved.fitDisplayXAxis,
+        fitDisplayYAxis: saved.fitDisplayYAxis,
         bjdWindowStart: saved.bjdWindowStart,
         bjdWindowEnd: saved.bjdWindowEnd,
         fitWindowPhase: saved.fitWindowPhase,

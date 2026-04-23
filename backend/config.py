@@ -1,7 +1,40 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from urllib.parse import urlparse
+
+
+def _load_dotenv_file(path: Path) -> None:
+    if not path.is_file():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            continue
+
+        name, value = line.split("=", 1)
+        key = name.strip()
+        if not key or key in os.environ:
+            continue
+
+        parsed_value = value.strip()
+        if (
+            len(parsed_value) >= 2
+            and parsed_value[0] == parsed_value[-1]
+            and parsed_value[0] in {'"', "'"}
+        ):
+            parsed_value = parsed_value[1:-1]
+
+        os.environ[key] = parsed_value
+
+
+_load_dotenv_file(Path(__file__).resolve().with_name(".env"))
 
 
 def _parse_bool(name: str, default: bool) -> bool:
@@ -129,6 +162,13 @@ TRANSIT_CUTOUT_STAGE_DIR = os.getenv(
     "",
 ).strip()
 RECORD_REQUIRE_LOGIN = _parse_bool("EASWA_RECORD_REQUIRE_LOGIN", True)
+ADMIN_EMAILS: frozenset[str] = frozenset(
+    email for email in (
+        item.strip().lower()
+        for item in os.getenv("EASWA_ADMIN_EMAILS", "").split(",")
+    )
+    if email
+)
 RECORD_SUBMISSION_LIMIT = _parse_int("EASWA_RECORD_SUBMISSION_LIMIT", 10)
 RECORD_MAX_CONTEXT_BYTES = _parse_int("EASWA_RECORD_MAX_CONTEXT_BYTES", 32 * 1024)
 RECORD_MAX_ANSWERS_BYTES = _parse_int("EASWA_RECORD_MAX_ANSWERS_BYTES", 32 * 1024)

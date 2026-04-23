@@ -1,6 +1,10 @@
 import type { TransitPhotometryResponse } from '../../types/transit';
 import type { TransitFitResponse } from '../../types/transitFit';
-import type { TransitFitDataSource } from './definition';
+import type {
+  TransitFitDataSource,
+  TransitFitDisplayXAxis,
+  TransitFitDisplayYAxis,
+} from './definition';
 
 export type TransitLightCurve = TransitPhotometryResponse['light_curve'];
 
@@ -16,6 +20,113 @@ export interface TransitLightCurveResiduals {
   x: number[];
   y: number[];
   error?: number[];
+}
+
+interface TransitLightCurveDisplayOptions {
+  xAxisMode: TransitFitDisplayXAxis;
+  yAxisMode: TransitFitDisplayYAxis;
+  period: number | null | undefined;
+  t0: number | null | undefined;
+}
+
+const DELTA_MAG_FACTOR = 2.5 / Math.LN10;
+
+export function fluxToDeltaMagnitude(flux: number): number {
+  if (!Number.isFinite(flux) || flux <= 0) return Number.NaN;
+  return -2.5 * Math.log10(flux);
+}
+
+export function fluxErrorToDeltaMagnitudeError(
+  flux: number,
+  fluxError: number
+): number {
+  if (!Number.isFinite(flux) || flux <= 0) return 0;
+  if (!Number.isFinite(fluxError) || fluxError <= 0) return 0;
+  return DELTA_MAG_FACTOR * (fluxError / flux);
+}
+
+function resolveDisplayPhase(
+  point: TransitPhotometryResponse['light_curve']['points'][number],
+  period: number | null | undefined,
+  t0: number | null | undefined
+): number | null {
+  if (typeof point.phase === 'number' && Number.isFinite(point.phase)) {
+    return point.phase;
+  }
+  if (
+    typeof period !== 'number' ||
+    !Number.isFinite(period) ||
+    period <= 0 ||
+    typeof t0 !== 'number' ||
+    !Number.isFinite(t0)
+  ) {
+    return null;
+  }
+  return computeTransitPhase(point.hjd, period, t0);
+}
+
+function toDisplayYAxisValue(
+  flux: number,
+  fluxError: number,
+  yAxisMode: TransitFitDisplayYAxis
+): { value: number; error: number } | null {
+  if (!Number.isFinite(flux)) return null;
+  if (yAxisMode === 'delta_mag') {
+    const deltaMag = fluxToDeltaMagnitude(flux);
+    if (!Number.isFinite(deltaMag)) return null;
+    return {
+      value: deltaMag,
+      error: fluxErrorToDeltaMagnitudeError(flux, fluxError),
+    };
+  }
+  return {
+    value: flux,
+    error: Number.isFinite(fluxError) && fluxError > 0 ? fluxError : 0,
+  };
+}
+
+export function transformLightCurveForDisplay(
+  lightCurve: TransitLightCurve,
+  options: TransitLightCurveDisplayOptions
+): TransitLightCurve | null {
+  const transformedPoints = lightCurve.points
+    .flatMap((point) => {
+      const phase = resolveDisplayPhase(point, options.period, options.t0);
+      if (options.xAxisMode === 'orbital_phase' && phase === null) {
+        return [];
+      }
+
+      const yValue = toDisplayYAxisValue(
+        point.magnitude,
+        point.mag_error,
+        options.yAxisMode
+      );
+      if (!yValue) return [];
+
+      return [
+        {
+          ...point,
+          phase,
+          magnitude: yValue.value,
+          mag_error: yValue.error,
+        },
+      ];
+    })
+    .sort((left, right) =>
+      options.xAxisMode === 'orbital_phase'
+        ? (left.phase ?? 0) - (right.phase ?? 0)
+        : left.hjd - right.hjd
+    );
+
+  if (transformedPoints.length === 0) return null;
+
+  return {
+    target_id: lightCurve.target_id,
+    period_days: options.period ?? lightCurve.period_days ?? null,
+    x_label: options.xAxisMode === 'orbital_phase' ? 'Orbital Phase' : 'BTJD',
+    y_label: options.yAxisMode === 'delta_mag' ? 'Delta mag' : 'Normalized Flux',
+    points: transformedPoints,
+  };
 }
 
 export function computeDefaultBjdWindow(
@@ -173,10 +284,10 @@ export function buildLightCurveFromFitResult(
 
 export function buildFitOverlayCurve(
   fitResult: TransitFitResponse,
-  fitDataSource: TransitFitDataSource
+  xAxisMode: TransitFitDisplayXAxis,
+  yAxisMode: TransitFitDisplayYAxis
 ): TransitLightCurveOverlay | null {
-  const xValues =
-    fitDataSource === 'phase_fold' ? fitResult.data_phase : fitResult.data_time;
+  const xValues = xAxisMode === 'orbital_phase' ? fitResult.data_phase : fitResult.data_time;
   if (
     xValues.length <= 1 ||
     xValues.length !== fitResult.data_flux.length ||
@@ -188,7 +299,10 @@ export function buildFitOverlayCurve(
   const points = xValues
     .map((x, index) => ({
       x,
-      y: fitResult.data_flux[index] - fitResult.residuals[index],
+      y:
+        yAxisMode === 'delta_mag'
+          ? fluxToDeltaMagnitude(fitResult.data_flux[index] - fitResult.residuals[index])
+          : fitResult.data_flux[index] - fitResult.residuals[index],
     }))
     .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
     .sort((left, right) => left.x - right.x);
@@ -204,26 +318,55 @@ export function buildFitOverlayCurve(
 
 export function buildFitResidualCurve(
   fitResult: TransitFitResponse,
-  fitDataSource: TransitFitDataSource
+  xAxisMode: TransitFitDisplayXAxis,
+  yAxisMode: TransitFitDisplayYAxis
 ): TransitLightCurveResiduals | null {
-  const xValues =
-    fitDataSource === 'phase_fold' ? fitResult.data_phase : fitResult.data_time;
-  if (xValues.length <= 1 || xValues.length !== fitResult.residuals.length) {
+  const xValues = xAxisMode === 'orbital_phase' ? fitResult.data_phase : fitResult.data_time;
+  if (
+    xValues.length <= 1 ||
+    xValues.length !== fitResult.residuals.length ||
+    fitResult.data_flux.length !== fitResult.residuals.length
+  ) {
     return null;
   }
 
   const points = xValues
     .map((x, index) => ({
       x,
-      y: fitResult.residuals[index],
+      value: fitResult.data_flux[index],
+      model: fitResult.data_flux[index] - fitResult.residuals[index],
       error: fitResult.data_error[index] ?? 0,
     }))
     .filter(
       (point) =>
         Number.isFinite(point.x) &&
-        Number.isFinite(point.y) &&
+        Number.isFinite(point.value) &&
+        Number.isFinite(point.model) &&
         Number.isFinite(point.error)
     )
+    .flatMap((point) => {
+      if (yAxisMode === 'delta_mag') {
+        const dataMag = fluxToDeltaMagnitude(point.value);
+        const modelMag = fluxToDeltaMagnitude(point.model);
+        if (!Number.isFinite(dataMag) || !Number.isFinite(modelMag)) {
+          return [];
+        }
+        return [
+          {
+            x: point.x,
+            y: dataMag - modelMag,
+            error: fluxErrorToDeltaMagnitudeError(point.value, point.error),
+          },
+        ];
+      }
+      return [
+        {
+          x: point.x,
+          y: point.value - point.model,
+          error: point.error,
+        },
+      ];
+    })
     .sort((left, right) => left.x - right.x);
 
   if (points.length <= 1) return null;

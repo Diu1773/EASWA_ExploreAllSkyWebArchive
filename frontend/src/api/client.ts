@@ -28,6 +28,14 @@ import type {
   WorkflowDraftItem,
   WorkflowDraftRequest,
 } from '../types/record';
+import type {
+  MicrolensingLightCurveResponse,
+  MicrolensingFitRequest,
+  MicrolensingFitResponse,
+  MicrolensingPreviewBundleResponse,
+  MicrolensingPreviewResponse,
+} from '../types/microlensing';
+import { consumeNdjsonStream } from './ndjson';
 
 const BASE = '/api';
 
@@ -181,35 +189,11 @@ export async function runTransitPhotometryStreaming(
   if (!res.ok) {
     throw new Error(await buildApiErrorMessage(res, 'POST /transit/photometry-stream failed'));
   }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let result: TransitPhotometryResponse | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop()!;
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const event = JSON.parse(line);
-      if (event.type === 'progress') {
-        onProgress(event as TransitPhotometryProgressEvent);
-      } else if (event.type === 'result') {
-        result = event.data as TransitPhotometryResponse;
-      } else if (event.type === 'error') {
-        throw new Error(event.message);
-      }
-    }
-  }
-
-  if (!result) throw new Error('No result received from photometry stream');
-  return result;
+  return consumeNdjsonStream(
+    res,
+    onProgress,
+    'No result received from photometry stream'
+  );
 }
 
 export async function fitTransitModel(
@@ -241,35 +225,11 @@ export async function fitTransitModelStreaming(
   if (!res.ok) {
     throw new Error(await buildApiErrorMessage(res, 'POST /transit/fit-stream failed'));
   }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let result: TransitFitResponse | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop()!;
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const event = JSON.parse(line);
-      if (event.type === 'progress') {
-        onProgress(event as FitProgressEvent);
-      } else if (event.type === 'result') {
-        result = event.data as TransitFitResponse;
-      } else if (event.type === 'error') {
-        throw new Error(event.message);
-      }
-    }
-  }
-
-  if (!result) throw new Error('No result received from fit stream');
-  return result;
+  return consumeNdjsonStream(
+    res,
+    onProgress,
+    'No result received from fit stream'
+  );
 }
 
 export async function createTransitPreviewJob(
@@ -422,6 +382,86 @@ export async function fetchSharedRecord(token: string): Promise<RecordListItem |
   }
   const data = await res.json();
   return (data.records?.[0] as RecordListItem) ?? null;
+}
+
+export interface GuideStats {
+  total_records: number;
+  records_with_guide: number;
+  question_stats: Record<string, Record<string, number>>;
+}
+
+export async function fetchGuideStats(): Promise<GuideStats> {
+  return get('/records/admin/guide-stats');
+}
+
+// ===== KMTNet Microlensing =====
+
+export async function fetchMicrolensingLightcurve(
+  targetId: string,
+  site?: string | null,
+  options?: {
+    mode?: 'quick' | 'detailed';
+    includeSites?: string[];
+    referenceFrameIndex?: number | null;
+  },
+): Promise<MicrolensingLightCurveResponse> {
+  const params = new URLSearchParams();
+  if (site) params.set('site', site);
+  if (options?.mode) params.set('mode', options.mode);
+  if (options?.referenceFrameIndex !== undefined && options.referenceFrameIndex !== null) {
+    params.set('reference_frame_index', String(options.referenceFrameIndex));
+  }
+  for (const selectedSite of options?.includeSites ?? []) {
+    params.append('include_site', selectedSite);
+  }
+  const query = params.size > 0 ? `?${params.toString()}` : '';
+  return get(`/kmtnet/lightcurve/${encodeURIComponent(targetId)}${query}`);
+}
+
+export async function fetchMicrolensingPreview(
+  targetId: string,
+  site: string,
+  frameIndex?: number | null,
+  sizePx = 64,
+  referenceFrameIndex?: number | null,
+): Promise<MicrolensingPreviewResponse> {
+  const params = new URLSearchParams({
+    site,
+    size_px: String(sizePx),
+  });
+  if (frameIndex !== undefined && frameIndex !== null) {
+    params.set('frame_index', String(frameIndex));
+  }
+  if (referenceFrameIndex !== undefined && referenceFrameIndex !== null) {
+    params.set('reference_frame_index', String(referenceFrameIndex));
+  }
+  return get(`/kmtnet/preview/${encodeURIComponent(targetId)}?${params.toString()}`);
+}
+
+export async function fetchMicrolensingPreviewBundle(
+  targetId: string,
+  site: string,
+  focusFrameIndex?: number | null,
+  sizePx = 64,
+  referenceFrameIndex?: number | null,
+): Promise<MicrolensingPreviewBundleResponse> {
+  const params = new URLSearchParams({
+    site,
+    size_px: String(sizePx),
+  });
+  if (focusFrameIndex !== undefined && focusFrameIndex !== null) {
+    params.set('focus_frame_index', String(focusFrameIndex));
+  }
+  if (referenceFrameIndex !== undefined && referenceFrameIndex !== null) {
+    params.set('reference_frame_index', String(referenceFrameIndex));
+  }
+  return get(`/kmtnet/preview-bundle/${encodeURIComponent(targetId)}?${params.toString()}`);
+}
+
+export async function fitMicrolensingModel(
+  req: MicrolensingFitRequest,
+): Promise<MicrolensingFitResponse> {
+  return post('/kmtnet/fit', req);
 }
 
 function extractFilename(

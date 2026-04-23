@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchTopics } from '../../api/client';
 import { DEFAULT_TRANSIT_FILTERS, useAppStore } from '../../stores/useAppStore';
@@ -45,7 +45,20 @@ export function TopicSidebar() {
   useEffect(() => {
     if (settingsOpen && gearButtonRef.current) {
       const rect = gearButtonRef.current.getBoundingClientRect();
-      setPanelPos({ top: rect.bottom + 8, left: rect.left - 150 });
+      const panelWidth = 240;
+      const panelHeight = 260;
+      const viewportMargin = 10;
+      const preferredLeft = rect.right - panelWidth;
+      const preferredTop = rect.bottom + 8;
+      const clampedLeft = Math.min(
+        Math.max(viewportMargin, preferredLeft),
+        Math.max(viewportMargin, window.innerWidth - panelWidth - viewportMargin),
+      );
+      const clampedTop =
+        preferredTop + panelHeight + viewportMargin <= window.innerHeight
+          ? preferredTop
+          : Math.max(viewportMargin, rect.top - panelHeight - 8);
+      setPanelPos({ top: clampedTop, left: clampedLeft });
     }
   }, [settingsOpen]);
 
@@ -65,9 +78,19 @@ export function TopicSidebar() {
     return () => document.removeEventListener('mousedown', handle);
   }, [settingsOpen]);
 
-  const updateDraft = (patch: Partial<TransitTargetFilters>) => {
-    setDraftFilters((current) => ({ ...current, ...patch }));
-  };
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const updateDraft = useCallback((patch: Partial<TransitTargetFilters>) => {
+    setDraftFilters((current) => {
+      const next = { ...current, ...patch };
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        setTransitFilters(next);
+        setTopic('exoplanet_transit');
+      }, 800);
+      return next;
+    });
+  }, [setTransitFilters, setTopic]);
 
   return (
     <div className={`topic-bar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -151,8 +174,18 @@ export function TopicSidebar() {
               onChange={(e) => updateDraft({ maxHostVmag: Math.max(6, Math.min(16, Number(e.target.value) || 6)) })} />
           </label>
           <div className="topic-settings-actions">
-            <button className="btn-sm" onClick={() => setDraftFilters(DEFAULT_TRANSIT_FILTERS)}>Reset</button>
-            <button className="btn-sm" onClick={() => { setTransitFilters(draftFilters); setTopic('exoplanet_transit'); setSettingsOpen(false); }}>Apply</button>
+            <button className="btn-sm" onClick={() => {
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              setDraftFilters(DEFAULT_TRANSIT_FILTERS);
+              setTransitFilters(DEFAULT_TRANSIT_FILTERS);
+              setTopic('exoplanet_transit');
+            }}>Reset</button>
+            <button className="btn-sm" onClick={() => {
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              setTransitFilters(draftFilters);
+              setTopic('exoplanet_transit');
+              setSettingsOpen(false);
+            }}>Apply</button>
           </div>
         </div>,
         document.body

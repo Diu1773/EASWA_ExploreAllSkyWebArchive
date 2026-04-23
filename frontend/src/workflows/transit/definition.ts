@@ -17,6 +17,8 @@ export type TransitWorkflowStep =
   | 'record';
 
 export type TransitFitDataSource = 'phase_fold' | 'bjd_window';
+export type TransitFitDisplayXAxis = 'btjd' | 'orbital_phase';
+export type TransitFitDisplayYAxis = 'normalized_flux' | 'delta_mag';
 
 export interface PersistedTransitComparisonStar {
   position: PixelCoordinate;
@@ -38,6 +40,8 @@ export interface PersistedTransitLabState {
   foldT0Auto: boolean;
   fitLimbDarkening: boolean;
   fitDataSource: TransitFitDataSource;
+  fitDisplayXAxis: TransitFitDisplayXAxis;
+  fitDisplayYAxis: TransitFitDisplayYAxis;
   bjdWindowStart: number | null;
   bjdWindowEnd: number | null;
   fitWindowPhase: number;
@@ -65,6 +69,12 @@ interface CreateTransitWorkflowDefinitionOptions {
 
 function normalizeFiniteNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function defaultFitDisplayXAxis(
+  fitDataSource: TransitFitDataSource
+): TransitFitDisplayXAxis {
+  return fitDataSource === 'phase_fold' ? 'orbital_phase' : 'btjd';
 }
 
 function normalizeNumberArray(value: unknown): number[] {
@@ -443,6 +453,8 @@ export function createTransitWorkflowDefinition({
       const candidate = raw as Partial<PersistedTransitLabState> & {
         recordSaved?: RecordSubmissionResponse | null;
       };
+      const fitDataSource =
+        candidate.fitDataSource === 'phase_fold' ? 'phase_fold' : 'bjd_window';
       return {
         selectedObservationIds: Array.isArray(candidate.selectedObservationIds)
           ? candidate.selectedObservationIds.filter(
@@ -495,8 +507,13 @@ export function createTransitWorkflowDefinition({
         foldT0: normalizeFiniteNumber(candidate.foldT0, 0),
         foldT0Auto: candidate.foldT0Auto === false ? false : true,
         fitLimbDarkening: Boolean(candidate.fitLimbDarkening),
-        fitDataSource:
-          candidate.fitDataSource === 'phase_fold' ? 'phase_fold' : 'bjd_window',
+        fitDataSource,
+        fitDisplayXAxis:
+          candidate.fitDisplayXAxis === 'orbital_phase' || candidate.fitDisplayXAxis === 'btjd'
+            ? candidate.fitDisplayXAxis
+            : defaultFitDisplayXAxis(fitDataSource),
+        fitDisplayYAxis:
+          candidate.fitDisplayYAxis === 'delta_mag' ? 'delta_mag' : 'normalized_flux',
         bjdWindowStart:
           typeof candidate.bjdWindowStart === 'number' &&
           Number.isFinite(candidate.bjdWindowStart)

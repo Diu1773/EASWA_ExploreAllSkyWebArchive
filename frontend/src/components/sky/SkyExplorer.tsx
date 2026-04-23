@@ -7,7 +7,8 @@ import { useSkyTargets } from '../../hooks/useSkyTargets';
 import type { Target } from '../../types/target';
 
 export function SkyExplorer() {
-  const { targets, selectedTopic } = useSkyTargets();
+  const { targets, loading, selectedTopic } = useSkyTargets();
+  const [nameSearch, setNameSearch] = useState('');
   const [popupTarget, setPopupTarget] = useState<Target | null>(null);
   const [gotoMessage, setGotoMessage] = useState<string | null>(null);
   const [gotoMessageTone, setGotoMessageTone] = useState<'info' | 'error' | null>(null);
@@ -16,6 +17,16 @@ export function SkyExplorer() {
   const setCurrentTarget = useAppStore((s) => s.setCurrentTarget);
   const viewerRef = useRef<AladinViewerHandle>(null);
 
+  const q = nameSearch.trim().toLowerCase();
+  const filteredTargets = q
+    ? targets.filter(
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          t.id.toLowerCase().includes(q) ||
+          t.constellation.toLowerCase().includes(q)
+      )
+    : targets;
+
   useEffect(() => {
     setPopupTarget(null);
     setGotoMessage(null);
@@ -23,6 +34,7 @@ export function SkyExplorer() {
     setGotoInProgress(false);
     setGotoReadyTargetId(null);
     setCurrentTarget(null);
+    setNameSearch('');
   }, [selectedTopic]);
 
   const handleTargetClick = (target: Target) => {
@@ -30,9 +42,10 @@ export function SkyExplorer() {
     setGotoMessage(null);
     setGotoMessageTone(null);
     setGotoInProgress(false);
+    // Unlock detail view immediately so users can navigate on first click
+    setCurrentTarget(target);
     if (gotoReadyTargetId !== target.id) {
-      setGotoReadyTargetId(null);
-      setCurrentTarget(null);
+      setGotoReadyTargetId(target.id);
     }
   };
 
@@ -68,10 +81,33 @@ export function SkyExplorer() {
       <div className="sky-map-area" style={{ flex: 1, position: 'relative' }}>
         <AladinViewer
           ref={viewerRef}
-          targets={targets}
+          targets={filteredTargets}
           onTargetClick={handleTargetClick}
         />
-        {selectedTopic === 'exoplanet_transit' && targets.length === 0 && (
+
+        {/* Search overlay */}
+        <div className="sky-search-overlay">
+          <input
+            type="search"
+            className="sky-search-input"
+            placeholder="이름 / 별자리 검색…"
+            value={nameSearch}
+            onChange={(e) => setNameSearch(e.target.value)}
+          />
+          {q && (
+            <span className="sky-search-count">
+              {filteredTargets.length} / {targets.length}
+            </span>
+          )}
+        </div>
+
+        {loading && (
+          <div className="sky-loading-overlay">
+            <span className="sky-loading-spinner" />
+            <span>대상 불러오는 중…</span>
+          </div>
+        )}
+        {!loading && selectedTopic === 'exoplanet_transit' && targets.length === 0 && (
           <div className="transit-empty-state">
             No transit targets matched the current filters. Reset filters or lower Min Depth.
           </div>

@@ -24,6 +24,8 @@ describe('createTransitWorkflowDefinition.normalizeSnapshot', () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot?.foldT0).toBe(2457000.1234);
     expect(snapshot?.foldT0Auto).toBe(true);
+    expect(snapshot?.fitDisplayXAxis).toBe('orbital_phase');
+    expect(snapshot?.fitDisplayYAxis).toBe('normalized_flux');
   });
 
   it('preserves explicit manual foldT0 overrides in new snapshots', () => {
@@ -38,5 +40,16 @@ describe('createTransitWorkflowDefinition.normalizeSnapshot', () => {
 
     expect(snapshot).not.toBeNull();
     expect(snapshot?.foldT0Auto).toBe(false);
+  });
+
+  it('defaults legacy BJD-window snapshots to a BTJD display axis', () => {
+    const snapshot = definition.normalizeSnapshot({
+      activeObservationId: 'sector-1',
+      fitDataSource: 'bjd_window',
+    });
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.fitDisplayXAxis).toBe('btjd');
+    expect(snapshot?.fitDisplayYAxis).toBe('normalized_flux');
   });
 });

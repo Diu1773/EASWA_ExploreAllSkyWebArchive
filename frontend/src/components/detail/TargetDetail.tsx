@@ -1,11 +1,18 @@
-import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { fetchTarget, fetchObservations } from '../../api/client';
 import { useAppStore } from '../../stores/useAppStore';
 import { ObservationTable } from './ObservationTable';
 import { AnalysisLauncher } from './AnalysisLauncher';
 import type { Target, Observation } from '../../types/target';
 import { buildDssPreviewUrl } from '../../utils/surveys';
+import {
+  alignExplorerContext,
+  buildExplorerContextSearchParams,
+  buildExplorerHref,
+  getExplorerBackLabel,
+  getExplorerContext,
+} from '../../utils/explorerNavigation';
 
 function formatTargetSource(source?: string | null): string | null {
   if (!source) return null;
@@ -16,6 +23,7 @@ function formatTargetSource(source?: string | null): string | null {
 
 export function TargetDetail() {
   const { targetId } = useParams<{ targetId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [target, setTarget] = useState<Target | null>(null);
   const [observations, setObservations] = useState<Observation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,19 +41,34 @@ export function TargetDetail() {
         setLoading(false);
       }
     );
-  }, [targetId]);
+  }, [setCurrentTarget, targetId]);
+
+  const navigationContext = useMemo(() => {
+    const ctx = getExplorerContext(searchParams, { topicId: target?.topic_id ?? null });
+    return target === null ? ctx : alignExplorerContext(ctx, target.topic_id);
+  }, [searchParams, target]);
+
+  useEffect(() => {
+    if (!target) return;
+    const next = buildExplorerContextSearchParams(navigationContext);
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [navigationContext, searchParams, setSearchParams, target]);
 
   if (loading || !target) {
     return <div className="loading">Loading target data...</div>;
   }
 
   const sourceLabel = formatTargetSource(target.data_source);
+  const explorerHref = buildExplorerHref(navigationContext);
+  const explorerLabel = getExplorerBackLabel(navigationContext);
 
   return (
     <div className="target-detail">
       <div className="detail-header">
-        <Link to="/" className="back-link">
-          &larr; Back to Sky Explorer
+        <Link to={explorerHref} className="back-link">
+          &larr; {explorerLabel}
         </Link>
         <div className="detail-overview">
           <div className="detail-summary">

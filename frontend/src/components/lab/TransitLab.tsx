@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import {
   downloadMyRecordPhotometryCsv,
   fetchMyRecordSubmission,
@@ -23,6 +23,8 @@ import {
   createTransitWorkflowDefinition,
   type PersistedTransitLabState,
   type TransitFitDataSource,
+  type TransitFitDisplayXAxis,
+  type TransitFitDisplayYAxis,
   type TransitStepAvailability,
   type TransitWorkflowStep,
 } from '../../workflows/transit/definition';
@@ -38,6 +40,7 @@ import {
   buildPhaseFoldedLightCurve,
   computeDefaultBjdWindow,
   estimatePhaseFoldReferenceT0,
+  transformLightCurveForDisplay,
 } from '../../workflows/transit/lightCurve';
 import { useTransitPreview } from '../../workflows/transit/hooks/useTransitPreview';
 import { useTransitPhotometry } from '../../workflows/transit/hooks/useTransitPhotometry';
@@ -72,156 +75,139 @@ const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
   { id: 'record', label: 'Record Result', number: 6 },
 ];
 
+function defaultFitDisplayXAxis(
+  fitDataSource: TransitFitDataSource
+): TransitFitDisplayXAxis {
+  return fitDataSource === 'phase_fold' ? 'orbital_phase' : 'btjd';
+}
+
 type GuideQuestion =
   | { type: 'open'; id: string; text: string }
   | { type: 'ox'; id: string; text: string; correct: 'O' | 'X'; explanation: string }
-  | {
-      type: 'choice';
-      id: string;
-      text: string;
-      options: string[];
-      correct: string;
-      explanation: string;
-    };
+  | { type: 'choice'; id: string; text: string; options: string[]; correct: string; explanation: string };
 
 const STEP_GUIDES: Record<TransitStep, GuideQuestion[]> = {
   select: [
-    {
-      type: 'ox',
-      id: 'select_q1',
-      text: '비교성은 목표 별보다 밝을수록 좋다.',
-      correct: 'X',
-      explanation:
-        '비교성은 목표 별과 비슷한 밝기여야 측정 오차가 최소화됩니다. 너무 밝거나 어두우면 검출기의 선형 범위를 벗어나 오차가 커집니다.',
-    },
-    {
-      type: 'choice',
-      id: 'select_q2',
-      text: '좋은 비교성의 조건으로 가장 중요한 것은?',
-      options: ['목표 별과 비슷한 밝기', '목표 별에서 최대한 멀리', '색깔이 붉은 별', '가장 밝은 별'],
-      correct: '목표 별과 비슷한 밝기',
-      explanation:
-        '밝기가 비슷한 별을 비교성으로 쓰면 대기·기기 효과가 동일하게 적용되어 차등 측광이 정확해집니다.',
-    },
+    { type: 'ox', id: 'select_q1', text: '비교성은 목표 별보다 밝을수록 좋다.', correct: 'X', explanation: '비교성은 목표 별과 비슷한 밝기여야 측정 오차가 최소화됩니다. 너무 밝거나 어두우면 검출기의 선형 범위를 벗어나 오차가 커집니다.' },
+    { type: 'choice', id: 'select_q2', text: '좋은 비교성의 조건으로 가장 중요한 것은?', options: ['목표 별과 비슷한 밝기', '목표 별에서 최대한 멀리', '색깔이 붉은 별', '가장 밝은 별'], correct: '목표 별과 비슷한 밝기', explanation: '밝기가 비슷한 별을 비교성으로 쓰면 대기·기기 효과가 동일하게 적용되어 차등 측광이 정확해집니다.' },
     { type: 'open', id: 'select_q3', text: '관측 이미지에서 목표 별과 비교성을 어떻게 구별할 수 있을까?' },
   ],
   run: [
-    {
-      type: 'ox',
-      id: 'run_q1',
-      text: '비교성이 많을수록 광도 측정의 정밀도가 항상 높아진다.',
-      correct: 'X',
-      explanation:
-        '품질이 낮은 비교성(변광성, RMS 높음)을 포함하면 오히려 정밀도가 떨어집니다. 좋은 비교성을 선별하는 것이 핵심입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'run_q2',
-      text: '앙상블 측광(ensemble photometry)이 단일 비교성 방식보다 유리한 이유는?',
-      options: ['계산이 빠르다', '개별 비교성의 오차가 평균화된다', '더 많은 별을 탐색할 수 있다', '대기 효과를 완전히 제거한다'],
-      correct: '개별 비교성의 오차가 평균화된다',
-      explanation:
-        '여러 비교성의 평균을 사용하면 특정 별의 우발적 변화가 희석되어 기준 플럭스가 안정됩니다.',
-    },
+    { type: 'ox', id: 'run_q1', text: '비교성이 많을수록 광도 측정의 정밀도가 항상 높아진다.', correct: 'X', explanation: '품질이 낮은 비교성(변광성, RMS 높음)을 포함하면 오히려 정밀도가 떨어집니다. 좋은 비교성을 선별하는 것이 핵심입니다.' },
+    { type: 'choice', id: 'run_q2', text: '앙상블 측광(ensemble photometry)이 단일 비교성 방식보다 유리한 이유는?', options: ['계산이 빠르다', '개별 비교성의 오차가 평균화된다', '더 많은 별을 탐색할 수 있다', '대기 효과를 완전히 제거한다'], correct: '개별 비교성의 오차가 평균화된다', explanation: '여러 비교성의 평균을 사용하면 특정 별의 우발적 변화가 희석되어 기준 플럭스가 안정됩니다.' },
     { type: 'open', id: 'run_q3', text: '구경(aperture) 크기가 측정값에 어떤 영향을 미칠까?' },
   ],
   comparisonqc: [
-    {
-      type: 'ox',
-      id: 'qc_q1',
-      text: '변광성(variable star)은 비교성으로 사용할 수 있다.',
-      correct: 'X',
-      explanation:
-        '변광성은 자체적으로 밝기가 바뀌므로 기준으로 쓰면 목표 별의 변화와 구별할 수 없어 비교성으로 부적합합니다.',
-    },
-    {
-      type: 'choice',
-      id: 'qc_q2',
-      text: '비교성 품질 지표(RMS)가 높다는 것은 무엇을 의미하는가?',
-      options: ['측정이 정밀하다', '밝기 변화가 불규칙하다', '목표 별에 가깝다', '대기가 안정적이다'],
-      correct: '밝기 변화가 불규칙하다',
-      explanation:
-        'RMS(산포도)가 높다는 것은 해당 비교성의 밝기 측정값이 일정하지 않다는 뜻으로, 신뢰할 수 없는 기준임을 의미합니다.',
-    },
+    { type: 'ox', id: 'qc_q1', text: '변광성(variable star)은 비교성으로 사용할 수 있다.', correct: 'X', explanation: '변광성은 자체적으로 밝기가 바뀌므로 기준으로 쓰면 목표 별의 변화와 구별할 수 없어 비교성으로 부적합합니다.' },
+    { type: 'choice', id: 'qc_q2', text: '비교성 품질 지표(RMS)가 높다는 것은 무엇을 의미하는가?', options: ['측정이 정밀하다', '밝기 변화가 불규칙하다', '목표 별에 가깝다', '대기가 안정적이다'], correct: '밝기 변화가 불규칙하다', explanation: 'RMS(산포도)가 높다는 것은 해당 비교성의 밝기 측정값이 일정하지 않다는 뜻으로, 신뢰할 수 없는 기준임을 의미합니다.' },
     { type: 'open', id: 'qc_q3', text: '제외한 비교성이 있다면, 제외 이유를 설명해보자.' },
   ],
   lightcurve: [
-    {
-      type: 'ox',
-      id: 'lc_q1',
-      text: '외계행성 식현상 중에는 별의 밝기가 감소한다.',
-      correct: 'O',
-      explanation:
-        '행성이 별 앞을 지나가면 별빛 일부를 가려 관측되는 밝기가 일시적으로 감소합니다. 이것이 식(transit) 신호입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'lc_q2',
-      text: '밝기 감소량(dip depth)이 클수록 무엇을 의미하는가?',
-      options: ['행성의 공전 주기가 길다', '행성이 별에 비해 크다', '행성의 질량이 크다', '식현상 지속 시간이 짧다'],
-      correct: '행성이 별에 비해 크다',
-      explanation:
-        '식 깊이는 (Rp/R*)²에 비례합니다. 행성이 별에 비해 클수록 더 많은 빛을 가려 밝기 감소가 커집니다.',
-    },
+    { type: 'ox', id: 'lc_q1', text: '외계행성 식현상 중에는 별의 밝기가 감소한다.', correct: 'O', explanation: '행성이 별 앞을 지나가면 별빛 일부를 가려 관측되는 밝기가 일시적으로 감소합니다. 이것이 식(transit) 신호입니다.' },
+    { type: 'choice', id: 'lc_q2', text: '밝기 감소량(dip depth)이 클수록 무엇을 의미하는가?', options: ['행성의 공전 주기가 길다', '행성이 별에 비해 크다', '행성의 질량이 크다', '식현상 지속 시간이 짧다'], correct: '행성이 별에 비해 크다', explanation: '식 깊이는 (Rp/R*)²에 비례합니다. 행성이 별에 비해 클수록 더 많은 빛을 가려 밝기 감소가 커집니다.' },
     { type: 'open', id: 'lc_q3', text: '광도 곡선에서 식의 시작과 끝 지점을 어떻게 찾았는가?' },
   ],
   transitfit: [
-    {
-      type: 'ox',
-      id: 'fit_q1',
-      text: 'χ²_red 값이 1보다 훨씬 크면 모델이 데이터와 잘 맞는다는 뜻이다.',
-      correct: 'X',
-      explanation:
-        'χ²_red ≫ 1이면 모델이 데이터를 잘 설명하지 못하거나 오차를 과소평가한 것입니다. 좋은 적합도는 χ²_red ≈ 1입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'fit_q2',
-      text: 'Rp/R* = 0.1이 의미하는 것은?',
-      options: ['행성 반지름이 별 반지름의 10%', '행성이 별보다 10배 크다', '식 깊이가 10%', '공전 주기가 0.1일'],
-      correct: '행성 반지름이 별 반지름의 10%',
-      explanation:
-        'Rp/R*는 행성 반지름과 별 반지름의 비율입니다. 0.1이면 행성이 별의 10% 크기이고, 식 깊이는 0.1² = 1%가 됩니다.',
-    },
+    { type: 'ox', id: 'fit_q1', text: 'χ²_red 값이 1보다 훨씬 크면 모델이 데이터와 잘 맞는다는 뜻이다.', correct: 'X', explanation: 'χ²_red ≫ 1이면 모델이 데이터를 잘 설명하지 못하거나 오차를 과소평가한 것입니다. 좋은 적합도는 χ²_red ≈ 1입니다.' },
+    { type: 'choice', id: 'fit_q2', text: 'Rp/R* = 0.1이 의미하는 것은?', options: ['행성 반지름이 별 반지름의 10%', '행성이 별보다 10배 크다', '식 깊이가 10%', '공전 주기가 0.1일'], correct: '행성 반지름이 별 반지름의 10%', explanation: 'Rp/R*는 행성 반지름과 별 반지름의 비율입니다. 0.1이면 행성이 별의 10% 크기이고, 식 깊이는 0.1² = 1%가 됩니다.' },
     { type: 'open', id: 'fit_q3', text: '적합 결과가 기대값과 다르다면 그 원인이 무엇일지 생각해보자.' },
   ],
   record: [
-    {
-      type: 'ox',
-      id: 'rec_q1',
-      text: '측정한 Rp/R* 값이 출판된 논문값과 완전히 일치할 것이다.',
-      correct: 'X',
-      explanation:
-        'TESS 데이터 노이즈, 비교성 선택, 구경 설정 등 여러 요인으로 측정값에는 항상 불확실성이 있습니다. 오차 범위 내에 있으면 좋은 결과입니다.',
-    },
-    {
-      type: 'choice',
-      id: 'rec_q2',
-      text: '이번 분석에서 측정 오차의 주요 원인은 무엇이라고 생각하는가?',
-      options: ['비교성 수 부족', '대기 불안정', '구경 크기 설정', '데이터 품질(TESS 노이즈)'],
-      correct: '데이터 품질(TESS 노이즈)',
-      explanation:
-        '지상 관측과 달리 TESS는 우주 망원경이라 대기 영향은 없지만, TESS 자체의 픽셀 크기(21"/px)로 인한 혼입(contamination)이 주요 오차 원인입니다.',
-    },
+    { type: 'ox', id: 'rec_q1', text: '측정한 Rp/R* 값이 출판된 논문값과 완전히 일치할 것이다.', correct: 'X', explanation: 'TESS 데이터 노이즈, 비교성 선택, 구경 설정 등 여러 요인으로 측정값에는 항상 불확실성이 있습니다. 오차 범위 내에 있으면 좋은 결과입니다.' },
+    { type: 'choice', id: 'rec_q2', text: '이번 분석에서 측정 오차의 주요 원인은 무엇이라고 생각하는가?', options: ['비교성 수 부족', '대기 불안정', '구경 크기 설정', '데이터 품질(TESS 노이즈)'], correct: '데이터 품질(TESS 노이즈)', explanation: '지상 관측과 달리 TESS는 우주 망원경이라 대기 영향은 없지만, TESS 자체의 픽셀 크기(21"/px)로 인한 혼입(contamination)이 주요 오차 원인입니다.' },
     { type: 'open', id: 'rec_q3', text: '이번 탐구에서 가장 흥미로웠던 점이나 추가로 알고 싶은 것을 적어보자.' },
   ],
 };
 
 type GuideAnswers = Record<string, string>;
 
+function describeLimbDarkeningSource(source: string | null | undefined): string {
+  if (!source) return 'automatic filter-based coefficients';
+  if (source === 'meidem_claret2017_quadratic') {
+    return 'Claret 2017 TESS coefficient grid';
+  }
+  if (source === 'meidem_claret2011_quadratic') {
+    return 'Claret 2011 coefficient grid';
+  }
+  if (source === 'stellar_filter_heuristic') {
+    return 'filter + host-star heuristic';
+  }
+  if (source === 'filter_default') {
+    return 'filter default coefficients';
+  }
+  return source.replace(/_/g, ' ');
+}
+
+function useCompactTransitLayout() {
+  const [compact, setCompact] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 980px)').matches : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 980px)');
+    const handleChange = (event: MediaQueryListEvent) => {
+      setCompact(event.matches);
+    };
+
+    setCompact(media.matches);
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handleChange);
+      return () => media.removeEventListener('change', handleChange);
+    }
+
+    media.addListener(handleChange);
+    return () => media.removeListener(handleChange);
+  }, []);
+
+  return compact;
+}
+
+function MobileFoldSection({
+  compact,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  compact: boolean;
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  if (!compact) return <>{children}</>;
+
+  return (
+    <details className="transit-mobile-fold" open={defaultOpen || undefined}>
+      <summary className="transit-mobile-fold-summary">
+        <span>{title}</span>
+        <span className="transit-mobile-fold-icon" aria-hidden="true" />
+      </summary>
+      <div className="transit-mobile-fold-body">
+        {children}
+      </div>
+    </details>
+  );
+}
+
 function StepGuide({
   step,
   onAnswersChange,
+  defaultOpen = true,
+  storageKeySuffix = 'default',
 }: {
   step: TransitStep;
   onAnswersChange?: (answers: GuideAnswers) => void;
+  defaultOpen?: boolean;
+  storageKeySuffix?: string;
 }) {
-  const storageKey = `easwa_guide_open_${step}`;
+  const storageKey = `easwa_guide_open_${step}_${storageKeySuffix}`;
   const [open, setOpen] = useState(() => {
     try {
-      return localStorage.getItem(storageKey) !== 'false';
+      const stored = localStorage.getItem(storageKey);
+      if (stored === null) return defaultOpen;
+      return stored !== 'false';
     } catch {
-      return true;
+      return defaultOpen;
     }
   });
   const [answers, setAnswers] = useState<GuideAnswers>({});
@@ -242,28 +228,11 @@ function StepGuide({
         onClick={() => {
           const next = !open;
           setOpen(next);
-          try {
-            localStorage.setItem(storageKey, String(next));
-          } catch {
-            // Ignore localStorage failures.
-          }
+          try { localStorage.setItem(storageKey, String(next)); } catch { /* ignore */ }
         }}
       >
         <span>생각해보기</span>
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{
-            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.2s',
-          }}
-        >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
@@ -308,15 +277,7 @@ function StepGuide({
                         <button
                           key={opt}
                           type="button"
-                          className={`transit-guide-choice-btn ${
-                            answered === opt
-                              ? isCorrect
-                                ? 'correct'
-                                : 'wrong'
-                              : answered && opt === q.correct
-                                ? 'reveal'
-                                : ''
-                          }`}
+                          className={`transit-guide-choice-btn ${answered === opt ? (isCorrect ? 'correct' : 'wrong') : (answered && opt === q.correct ? 'reveal' : '')}`}
                           onClick={() => handleAnswer(q.id, answered === opt ? '' : opt)}
                         >
                           {opt}
@@ -337,7 +298,7 @@ function StepGuide({
                   className="transit-guide-textarea"
                   placeholder="여기에 생각을 적어보세요..."
                   value={answers[q.id] ?? ''}
-                  onChange={(event) => handleAnswer(q.id, event.target.value)}
+                  onChange={(e) => handleAnswer(q.id, e.target.value)}
                   rows={3}
                 />
               )}
@@ -409,12 +370,14 @@ export function TransitLab({
   draftId = null,
   seedRecordId = null,
 }: TransitLabProps) {
+  const isCompactTransitLayout = useCompactTransitLayout();
   const selectedIds = useAppStore((s) => s.selectedObservationIds);
   const selectAllObservations = useAppStore((s) => s.selectAllObservations);
   const user = useAuthStore((s) => s.user);
   const [observationSelectionHydrated, setObservationSelectionHydrated] = useState(() =>
     useAppStore.persist.hasHydrated()
   );
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [recordTemplate, setRecordTemplate] = useState<RecordTemplate | null>(
     defaultTransitRecordTemplate
   );
@@ -453,6 +416,8 @@ export function TransitLab({
     foldT0Auto,
     fitLimbDarkening,
     fitDataSource,
+    fitDisplayXAxis,
+    fitDisplayYAxis,
     bjdWindowStart,
     bjdWindowEnd,
     fitWindowPhase,
@@ -502,6 +467,19 @@ export function TransitLab({
     ? `${fitResult.used_batman ? 'batman transit model' : 'simplified transit model'} · ${
         fitResult.used_mcmc ? 'emcee MCMC posterior' : 'least-squares optimization'
       }`
+    : null;
+  const fitLimbDarkeningSource =
+    fitResult?.limb_darkening_source ?? fitResult?.preprocessing.limb_darkening_source ?? null;
+  const fitLimbDarkeningFilter =
+    fitResult?.limb_darkening_filter ?? fitResult?.preprocessing.limb_darkening_filter ?? null;
+  const fitLimbDarkeningExplanation = fitResult
+    ? fitLimbDarkening
+      ? `u₁ and u₂ were allowed to vary during the fit, starting from ${describeLimbDarkeningSource(
+          fitLimbDarkeningSource,
+        )}${fitLimbDarkeningFilter ? ` for the ${fitLimbDarkeningFilter} band` : ''}.`
+      : `u₁ and u₂ were automatically set from ${describeLimbDarkeningSource(
+          fitLimbDarkeningSource,
+        )}${fitLimbDarkeningFilter ? ` for the ${fitLimbDarkeningFilter} band` : ''}, using the host-star parameters when available, and then held fixed during the fit.`
     : null;
   const workflowSessionSource: WorkflowSessionSource =
     draftId && draftId.trim() !== ''
@@ -555,6 +533,8 @@ export function TransitLab({
     foldT0Auto,
     fitLimbDarkening,
     fitDataSource,
+    fitDisplayXAxis,
+    fitDisplayYAxis,
     bjdWindowStart,
     bjdWindowEnd,
     fitWindowPhase,
@@ -747,6 +727,8 @@ export function TransitLab({
             aperture?: ApertureParams;
             fit_controls?: {
               fit_data_source?: TransitFitDataSource;
+              display_x_axis?: TransitFitDisplayXAxis;
+              display_y_axis?: TransitFitDisplayYAxis;
               bjd_start?: number | null;
               bjd_end?: number | null;
               fit_window_phase?: number;
@@ -804,6 +786,13 @@ export function TransitLab({
           fitSigmaClipIterations: payload.context?.fit_controls?.sigma_clip_iterations ?? 0,
           fitLimbDarkening: payload.context?.fit_controls?.fit_limb_darkening ?? false,
           fitDataSource: payload.context?.fit_controls?.fit_data_source ?? 'bjd_window',
+          fitDisplayXAxis:
+            payload.context?.fit_controls?.display_x_axis ??
+            defaultFitDisplayXAxis(
+              payload.context?.fit_controls?.fit_data_source ?? 'bjd_window'
+            ),
+          fitDisplayYAxis:
+            payload.context?.fit_controls?.display_y_axis ?? 'normalized_flux',
           foldPeriod:
             typeof payload.context?.transit_fit?.period === 'number' &&
               Number.isFinite(payload.context.transit_fit.period) &&
@@ -1262,6 +1251,8 @@ export function TransitLab({
           } : null,
           fit_controls: {
             fit_data_source: fitDataSource,
+            display_x_axis: fitDisplayXAxis,
+            display_y_axis: fitDisplayYAxis,
             bjd_start: resolvedBjdWindow?.start ?? null,
             bjd_end: resolvedBjdWindow?.end ?? null,
             fit_window_phase: requestedFitWindowPhase,
@@ -1303,6 +1294,8 @@ export function TransitLab({
       foldT0Auto: true,
       fitLimbDarkening: false,
       fitDataSource: 'bjd_window',
+      fitDisplayXAxis: 'btjd',
+      fitDisplayYAxis: 'normalized_flux',
       fitWindowPhase: 0.12,
       fitBaselineOrder: 0,
       fitSigmaClipSigma: 0.0,
@@ -1329,6 +1322,12 @@ export function TransitLab({
     const prevIndex = currentStepIndex - 1;
     if (prevIndex >= 0) setStep(stepOrder[prevIndex]);
   };
+  const currentStepMeta =
+    STEPS.find((item) => item.id === step) ?? STEPS[0];
+
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [step]);
 
   const cutoutArcmin =
     cutoutSizePx !== null ? ((cutoutSizePx * 21) / 60).toFixed(1) : null;
@@ -1412,7 +1411,7 @@ export function TransitLab({
             0.35,
           )
         : fitWindowPhase;
-  const fitDisplayLightCurve =
+  const fitDisplayBaseLightCurve =
     activeFitPreviewResult
       ? buildLightCurveFromFitResult(activeFitPreviewResult, fitDataSource)
       : fitDataSource === 'phase_fold' && fitReferencePeriod
@@ -1424,6 +1423,17 @@ export function TransitLab({
             requestedFitWindowPhase
           )
         : roiLightCurve;
+  const fitDisplayReferencePeriod = activeFitPreviewResult?.period ?? fitReferencePeriod;
+  const fitDisplayReferenceT0 = activeFitPreviewResult?.reference_t0 ?? phaseFoldReferenceT0;
+  const fitDisplayLightCurve =
+    fitDisplayBaseLightCurve
+      ? transformLightCurveForDisplay(fitDisplayBaseLightCurve, {
+          xAxisMode: fitDisplayXAxis,
+          yAxisMode: fitDisplayYAxis,
+          period: fitDisplayReferencePeriod,
+          t0: fitDisplayReferenceT0,
+        })
+      : null;
   const fitWindowPointCount = roiPoints.length;
   const canFitWithBjdWindow =
     hasResolvedBjdWindow && fitWindowPointCount >= 20;
@@ -1433,13 +1443,18 @@ export function TransitLab({
     Boolean(canFitWithBjdWindow && fitReferencePeriod);
   const fitSourceLabel =
     fitDataSource === 'phase_fold' ? 'Phase Fold' : 'BJD Window';
+  const fitDisplayXAxisLabel =
+    fitDisplayXAxis === 'orbital_phase' ? 'Orbital Phase' : 'BTJD';
+  const fitDisplayYAxisLabel =
+    fitDisplayYAxis === 'delta_mag' ? 'Delta mag' : 'Normalized Flux';
+  const canDisplayFitAsPhase = Boolean(fitDisplayReferencePeriod && fitDisplayReferencePeriod > 0);
   const fitPreviewOverlay =
     activeFitPreviewResult
-      ? buildFitOverlayCurve(activeFitPreviewResult, fitDataSource)
+      ? buildFitOverlayCurve(activeFitPreviewResult, fitDisplayXAxis, fitDisplayYAxis)
       : null;
   const fitPreviewResiduals =
     activeFitPreviewResult
-      ? buildFitResidualCurve(activeFitPreviewResult, fitDataSource)
+      ? buildFitResidualCurve(activeFitPreviewResult, fitDisplayXAxis, fitDisplayYAxis)
       : null;
   const fitResultModelFlux =
     fitResult && fitResult.data_flux.length === fitResult.residuals.length
@@ -1491,21 +1506,38 @@ export function TransitLab({
           : 'Draft session';
 
   return (
-    <div className="lab-content transit-lab">
+    <div className="transit-lab-wrap">
+      {draftId && (
+        <div className={`transit-draft-bar ${draftSaveStatus}`}>
+          <span className="transit-draft-bar-label">Draft</span>
+          <span className="transit-draft-bar-id">{draftId}</span>
+          {seedRecordSummary && (
+            <span className="transit-draft-bar-seed">Seed #{seedRecordSummary.submission_id}</span>
+          )}
+          <span className="transit-draft-bar-status">{draftStatusLabel}</span>
+        </div>
+      )}
+    <div className={`lab-content transit-lab ${mobileSidebarOpen ? 'transit-mobile-sidebar-open' : ''}`}>
       {/* ===== SIDEBAR — changes per step ===== */}
       <div className="lab-sidebar">
-        {draftId && (
-          <div className={`transit-callout transit-draft-status ${draftSaveStatus}`}>
-            <div className="transit-draft-status-head">
-              <strong>Draft Session</strong>
-              <span>{draftStatusLabel}</span>
-            </div>
-            <div className="transit-draft-status-meta">
-              <span>{draftId}</span>
-              {seedRecordSummary && <span>Seed #{seedRecordSummary.submission_id}</span>}
-            </div>
+        <button
+          type="button"
+          className={`transit-mobile-sidebar-toggle ${mobileSidebarOpen ? 'open' : ''}`}
+          onClick={() => setMobileSidebarOpen((prev) => !prev)}
+          aria-expanded={mobileSidebarOpen}
+        >
+          <div className="transit-mobile-sidebar-copy">
+            <span className="transit-mobile-sidebar-kicker">
+              Step {currentStepMeta.number} controls
+            </span>
+            <strong>{currentStepMeta.label}</strong>
           </div>
-        )}
+          <span className="transit-mobile-sidebar-icon" aria-hidden="true">
+            {mobileSidebarOpen ? '−' : '+'}
+          </span>
+        </button>
+
+        <div className="transit-sidebar-scroll">
         {/* Sector list — always visible */}
         <div className="thumbnail-strip">
           <h4>Selected Sectors ({selectedObservations.length})</h4>
@@ -1542,8 +1574,9 @@ export function TransitLab({
             <div className="transit-controls-card">
               <h4>Stars</h4>
               <p className="hint">
-                Click a star below to adjust its aperture. Click the cutout image
-                to add comparison stars (up to {MAX_COMPARISON_STARS}).
+                Tap or click a star below to adjust its aperture. Tap the cutout image
+                to add comparison stars, or drag an existing aperture to reposition it
+                (up to {MAX_COMPARISON_STARS}).
               </p>
               <div className="transit-star-list">
                 {/* Target star */}
@@ -1601,17 +1634,11 @@ export function TransitLab({
 
                 {comparisonStars.length === 0 && (
                   <div className="transit-star-row empty">
-                    Click cutout to add comparisons
+                    Tap the cutout to add comparison stars
                   </div>
                 )}
               </div>
             </div>
-            {pendingCutoutSizePx > 60 && (
-              <p className="hint" style={{ marginTop: 8 }}>
-                Larger cutouts help compare more stars, but long TESS sectors can load more
-                slowly at 70-99 px.
-              </p>
-            )}
 
             {/* Per-star aperture sliders */}
             <div className="transit-controls-card">
@@ -1668,7 +1695,17 @@ export function TransitLab({
             {/* TIC recommended comparisons */}
             {preview && (preview.tic_stars?.length ?? 0) > 0 && (
               <div className="transit-controls-card">
-                <h4>TIC Catalog Stars</h4>
+                <div className="transit-controls-card-header">
+                  <h4>TIC Catalog Stars</h4>
+                  <button
+                    type="button"
+                    className={`btn-sm ${showTicMarkers ? 'active' : ''}`}
+                    onClick={() => dispatch({ type: 'update', updater: (s) => ({ showTicMarkers: !s.showTicMarkers }) })}
+                    title="이미지에 TIC 별 마커 표시"
+                  >
+                    {showTicMarkers ? 'Hide markers' : 'Show markers'}
+                  </button>
+                </div>
                 <p className="hint">
                   Bright stars from TESS Input Catalog in the field of view.
                   Recommended stars are non-variable and bright.
@@ -2009,7 +2046,11 @@ export function TransitLab({
               <button
                 className={`btn-sm ${fitDataSource === 'bjd_window' ? 'active' : ''}`}
                 onClick={() => {
-                  patch({ fitDataSource: 'bjd_window', fitResult: null });
+                  patch({
+                    fitDataSource: 'bjd_window',
+                    fitDisplayXAxis: defaultFitDisplayXAxis('bjd_window'),
+                    fitResult: null,
+                  });
                 }}
                 type="button"
               >
@@ -2020,6 +2061,7 @@ export function TransitLab({
                 onClick={() => {
                   patch({
                     fitDataSource: 'phase_fold',
+                    fitDisplayXAxis: defaultFitDisplayXAxis('phase_fold'),
                     fitResult: null,
                   });
                 }}
@@ -2029,10 +2071,63 @@ export function TransitLab({
                 Phase Fold
               </button>
             </div>
+            <p className="hint" style={{ marginBottom: 8 }}>
+              Plot axis remapping only changes how Step 5 is displayed. The fit still uses the
+              same ROI samples and current fit source.
+            </p>
+            <div className="transit-toggle-row" style={{ marginBottom: 8 }}>
+              <button
+                className={`btn-sm ${fitDisplayXAxis === 'btjd' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayXAxis: 'btjd' });
+                }}
+                type="button"
+              >
+                X: BTJD
+              </button>
+              <button
+                className={`btn-sm ${fitDisplayXAxis === 'orbital_phase' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayXAxis: 'orbital_phase' });
+                }}
+                type="button"
+                disabled={!canDisplayFitAsPhase}
+              >
+                X: Orbital Phase
+              </button>
+            </div>
+            <div className="transit-toggle-row" style={{ marginBottom: 12 }}>
+              <button
+                className={`btn-sm ${fitDisplayYAxis === 'normalized_flux' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayYAxis: 'normalized_flux' });
+                }}
+                type="button"
+              >
+                Y: Flux
+              </button>
+              <button
+                className={`btn-sm ${fitDisplayYAxis === 'delta_mag' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayYAxis: 'delta_mag' });
+                }}
+                type="button"
+              >
+                Y: Delta mag
+              </button>
+            </div>
             <div className="transit-config-summary" style={{ marginBottom: 12 }}>
               <div className="transit-config-row">
                 <span>Fit Source</span>
                 <span>{fitSourceLabel}</span>
+              </div>
+              <div className="transit-config-row">
+                <span>Display X</span>
+                <span>{fitDisplayXAxisLabel}</span>
+              </div>
+              <div className="transit-config-row">
+                <span>Display Y</span>
+                <span>{fitDisplayYAxisLabel}</span>
               </div>
               {fitDataSource === 'bjd_window' && resolvedBjdWindow && (
                 <div className="transit-config-row">
@@ -2143,8 +2238,8 @@ export function TransitLab({
               </p>
             )}
             <div className="transit-callout" style={{ marginTop: 12 }}>
-              Step 5는 항상 Step 4에서 고른 같은 ROI 점열만 씁니다. 바뀌는 건 표시와
-              fit 좌표계뿐이고, 소스 cadence 자체는 바뀌지 않습니다.
+              Step 5는 항상 Step 4에서 고른 같은 ROI 점열만 씁니다. fit에 들어가는 cadence는
+              그대로 두고, 화면에서만 X/Y 축 표현을 다시 매핑할 수 있습니다.
             </div>
             {fitDataSource === 'phase_fold' && hasResolvedBjdWindow && (
               <div className="transit-callout" style={{ marginTop: 12 }}>
@@ -2268,6 +2363,7 @@ export function TransitLab({
             )}
           </div>
         )}
+        </div>
       </div>
 
       {/* ===== MAIN PANEL ===== */}
@@ -2348,10 +2444,8 @@ export function TransitLab({
               <div>
                 <h3>1. Select Target & Comparison Stars</h3>
                 <p className="hint">
-                  The target star is marked with an orange aperture (T). Click bright
-                  neighboring stars on the cutout to place comparison apertures (blue).
-                  Use the frame controls above the image to inspect individual cadences.
-                  Click any star on the image or in the sidebar to adjust its aperture.
+                  목표별(T, 주황)이 중앙에 표시됩니다. 주변 밝은 별을 눌러 비교별(파랑)을 추가하고,
+                  이미 선택한 별은 드래그해서 위치를 미세 조정할 수 있습니다.
                 </p>
               </div>
               {activeObservation && (
@@ -2362,11 +2456,21 @@ export function TransitLab({
               )}
             </div>
 
-            <StepGuide step="select" onAnswersChange={handleGuideAnswers} />
+            <StepGuide
+              step="select"
+              onAnswersChange={handleGuideAnswers}
+              defaultOpen={!isCompactTransitLayout}
+              storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+            />
 
-            <div className="transit-field-size-card">
+            <div className={`transit-field-size-card ${!preview ? 'transit-field-size-card--empty' : ''}`}>
               <div>
                 <strong>Field Size</strong>
+                {!preview && (
+                  <p className="hint" style={{ marginTop: 4, fontSize: 12 }}>
+                    시야 크기를 선택하고 Load를 눌러 TESS 관측 이미지를 불러오세요.
+                  </p>
+                )}
               </div>
               <div className="transit-field-size-options">
                 <select
@@ -2383,11 +2487,11 @@ export function TransitLab({
                 </select>
                 <button
                   type="button"
-                  className="btn-primary btn-sm"
-                  disabled={previewLoading || framePreviewLoading || (cutoutSizePx === pendingCutoutSizePx && preview !== null)}
+                  className={preview ? 'btn-sm' : 'btn-primary'}
+                  disabled={previewLoading || framePreviewLoading}
                   onClick={() => patch({ cutoutSizePx: pendingCutoutSizePx })}
                 >
-                  Load
+                  {previewLoading ? 'Loading…' : preview ? 'Reload' : 'Load'}
                 </button>
               </div>
             </div>
@@ -2399,7 +2503,6 @@ export function TransitLab({
                   displayCutoutSizePx={cutoutSizePx ?? preview.cutout_size_px}
                   stars={starOverlays}
                   showTicMarkers={showTicMarkers}
-                  onToggleTicMarkers={() => dispatch({ type: 'update', updater: (s) => ({ showTicMarkers: !s.showTicMarkers }) })}
                   activeFrameIndex={currentFrameIndex}
                   onFrameChange={handleFrameChange}
                   frameChangeDisabled={previewLoading || framePreviewLoading}
@@ -2410,36 +2513,41 @@ export function TransitLab({
                   onMoveStar={handleMoveStar}
                 />
 
-                <div className="transit-summary-grid">
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Field View</span>
-                    <strong>
-                      {cutoutSizePx} px / {cutoutArcmin}'
-                    </strong>
+                <MobileFoldSection
+                  compact={isCompactTransitLayout}
+                  title="Cutout details"
+                >
+                  <div className="transit-summary-grid">
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Field View</span>
+                      <strong>
+                        {cutoutSizePx} px / {cutoutArcmin}'
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Loaded Cutout</span>
+                      <strong>
+                        {preview.cutout_size_px} px / {loadedCutoutArcmin}'
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Cadences</span>
+                      <strong>{preview.frame_count.toLocaleString()}</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Preview Frame</span>
+                      <strong>
+                        {currentFrameIndex !== null
+                          ? `${currentFrameIndex + 1} / ${preview.frame_count}`
+                          : 'Median'}
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Time Span</span>
+                      <strong>{(preview.time_end - preview.time_start).toFixed(2)} d</strong>
+                    </div>
                   </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Loaded Cutout</span>
-                    <strong>
-                      {preview.cutout_size_px} px / {loadedCutoutArcmin}'
-                    </strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Cadences</span>
-                    <strong>{preview.frame_count.toLocaleString()}</strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Preview Frame</span>
-                    <strong>
-                      {currentFrameIndex !== null
-                        ? `${currentFrameIndex + 1} / ${preview.frame_count}`
-                        : 'Median'}
-                    </strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Time Span</span>
-                    <strong>{(preview.time_end - preview.time_start).toFixed(2)} d</strong>
-                  </div>
-                </div>
+                </MobileFoldSection>
               </>
             )}
 
@@ -2484,33 +2592,43 @@ export function TransitLab({
               )}
             </div>
 
-            <StepGuide step="run" onAnswersChange={handleGuideAnswers} />
+            <StepGuide
+              step="run"
+              onAnswersChange={handleGuideAnswers}
+              defaultOpen={!isCompactTransitLayout}
+              storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+            />
 
             {effectiveTargetPosition ? (
               <>
-                <div className="transit-summary-grid">
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Target</span>
-                    <strong>
-                      ({effectiveTargetPosition.x.toFixed(1)},{' '}
-                      {effectiveTargetPosition.y.toFixed(1)})
-                    </strong>
+                <MobileFoldSection
+                  compact={isCompactTransitLayout}
+                  title="Photometry inputs"
+                >
+                  <div className="transit-summary-grid">
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Target</span>
+                      <strong>
+                        ({effectiveTargetPosition.x.toFixed(1)},{' '}
+                        {effectiveTargetPosition.y.toFixed(1)})
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Comparisons</span>
+                      <strong>{comparisonStars.length}</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Field</span>
+                      <strong>{cutoutSizePx} px</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Cadences</span>
+                      <strong>
+                        {(preview?.frame_count ?? activeObservation?.frame_count ?? 0).toLocaleString()}
+                      </strong>
+                    </div>
                   </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Comparisons</span>
-                    <strong>{comparisonStars.length}</strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Field</span>
-                    <strong>{cutoutSizePx} px</strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Cadences</span>
-                    <strong>
-                      {(preview?.frame_count ?? activeObservation?.frame_count ?? 0).toLocaleString()}
-                    </strong>
-                  </div>
-                </div>
+                </MobileFoldSection>
 
                 {showRunProgress && (
                   <div className="transit-progress-wrapper">
@@ -2607,7 +2725,12 @@ export function TransitLab({
                 </div>
               </div>
 
-              <StepGuide step="comparisonqc" onAnswersChange={handleGuideAnswers} />
+              <StepGuide
+                step="comparisonqc"
+                onAnswersChange={handleGuideAnswers}
+                defaultOpen={!isCompactTransitLayout}
+                storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+              />
 
               {running && (
                 <div className="transit-progress-card" style={{ marginBottom: 16 }}>
@@ -2629,24 +2752,29 @@ export function TransitLab({
 
               {result ? (
                 <>
-                  <div className="transit-summary-grid">
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Candidates</span>
-                      <strong>{comparisonDiagnostics.length}</strong>
+                  <MobileFoldSection
+                    compact={isCompactTransitLayout}
+                    title="QC overview"
+                  >
+                    <div className="transit-summary-grid">
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Candidates</span>
+                        <strong>{comparisonDiagnostics.length}</strong>
+                      </div>
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Included</span>
+                        <strong>{qcIncludedDiagnostics.length}</strong>
+                      </div>
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Excluded</span>
+                        <strong>{qcExcludedCount}</strong>
+                      </div>
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Current Ensemble</span>
+                        <strong>{result.comparison_count}</strong>
+                      </div>
                     </div>
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Included</span>
-                      <strong>{qcIncludedDiagnostics.length}</strong>
-                    </div>
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Excluded</span>
-                      <strong>{qcExcludedCount}</strong>
-                    </div>
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Current Ensemble</span>
-                      <strong>{result.comparison_count}</strong>
-                    </div>
-                  </div>
+                  </MobileFoldSection>
 
                   {qcSelectionDirty && (
                     <div className="transit-callout" style={{ marginBottom: 16 }}>
@@ -2706,34 +2834,39 @@ export function TransitLab({
 
                       {selectedComparisonDiagnosticData && (
                         <>
-                          <div className="transit-summary-grid">
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Selected Pair</span>
-                              <strong>T / {selectedComparisonDiagnosticData.label}</strong>
+                          <MobileFoldSection
+                            compact={isCompactTransitLayout}
+                            title={`Selected pair: ${selectedComparisonDiagnosticData.label}`}
+                          >
+                            <div className="transit-summary-grid">
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Selected Pair</span>
+                                <strong>T / {selectedComparisonDiagnosticData.label}</strong>
+                              </div>
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Status</span>
+                                <strong>
+                                  {qcIncludedComparisonLabels.includes(
+                                    selectedComparisonDiagnosticData.label
+                                  )
+                                    ? 'Included'
+                                    : 'Excluded'}
+                                </strong>
+                              </div>
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Pair RMS</span>
+                                <strong>
+                                  {selectedComparisonDiagnosticData.differential_rms.toFixed(4)}
+                                </strong>
+                              </div>
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Pair MAD</span>
+                                <strong>
+                                  {selectedComparisonDiagnosticData.differential_mad.toFixed(4)}
+                                </strong>
+                              </div>
                             </div>
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Status</span>
-                              <strong>
-                                {qcIncludedComparisonLabels.includes(
-                                  selectedComparisonDiagnosticData.label
-                                )
-                                  ? 'Included'
-                                  : 'Excluded'}
-                              </strong>
-                            </div>
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Pair RMS</span>
-                              <strong>
-                                {selectedComparisonDiagnosticData.differential_rms.toFixed(4)}
-                              </strong>
-                            </div>
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Pair MAD</span>
-                              <strong>
-                                {selectedComparisonDiagnosticData.differential_mad.toFixed(4)}
-                              </strong>
-                            </div>
-                          </div>
+                          </MobileFoldSection>
 
                           <LightCurvePlot
                             data={selectedComparisonDiagnosticData.light_curve}
@@ -2809,26 +2942,36 @@ export function TransitLab({
                 </div>
               </div>
 
-              <StepGuide step="lightcurve" onAnswersChange={handleGuideAnswers} />
+              <StepGuide
+                step="lightcurve"
+                onAnswersChange={handleGuideAnswers}
+                defaultOpen={!isCompactTransitLayout}
+                storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+              />
 
-              <div className="transit-summary-grid">
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Frames</span>
-                  <strong>{result.frame_count.toLocaleString()}</strong>
+              <MobileFoldSection
+                compact={isCompactTransitLayout}
+                title="Light curve stats"
+              >
+                <div className="transit-summary-grid">
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Frames</span>
+                    <strong>{result.frame_count.toLocaleString()}</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Comparisons</span>
+                    <strong>{result.comparison_count}</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Median Target</span>
+                    <strong>{result.target_median_flux.toLocaleString()}</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Median Comp</span>
+                    <strong>{result.comparison_median_flux.toLocaleString()}</strong>
+                  </div>
                 </div>
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Comparisons</span>
-                  <strong>{result.comparison_count}</strong>
-                </div>
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Median Target</span>
-                  <strong>{result.target_median_flux.toLocaleString()}</strong>
-                </div>
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Median Comp</span>
-                  <strong>{result.comparison_median_flux.toLocaleString()}</strong>
-                </div>
-              </div>
+              </MobileFoldSection>
             </div>
 
             <LightCurvePlot
@@ -2874,13 +3017,17 @@ export function TransitLab({
                 </div>
               </div>
 
-              <StepGuide step="transitfit" onAnswersChange={handleGuideAnswers} />
+              <StepGuide
+                step="transitfit"
+                onAnswersChange={handleGuideAnswers}
+                defaultOpen={!isCompactTransitLayout}
+                storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+              />
 
               <div className="transit-callout">
-                Black points are the exact normalized samples used in the fit. Red is the
-                best-fit transit model on that same axis, so Step 5 now shows one ROI with
-                two view modes instead of mixing Step 4 light-curve selection and Step 5
-                fit coordinates.
+                Black points are the exact samples used in the fit. Red is the best-fit
+                transit model for those same samples, and the X/Y axes can be remapped in
+                the sidebar without rerunning the fit.
               </div>
 
               {fitDataSource === 'phase_fold' && !fitReferencePeriod && (
@@ -3180,6 +3327,11 @@ export function TransitLab({
                   <div className="transit-callout">
                     Method used: {fitEngineLabel}
                   </div>
+                  {fitLimbDarkeningExplanation && (
+                    <div className="transit-callout transit-callout-info">
+                      Limb darkening: {fitLimbDarkeningExplanation}
+                    </div>
+                  )}
                   <div className="transit-callout">
                     The fitted transit model is drawn directly on the current Step 5 ROI view.
                   </div>
@@ -3253,92 +3405,112 @@ export function TransitLab({
               </div>
             </div>
 
-            <StepGuide step="record" onAnswersChange={handleGuideAnswers} />
+            <StepGuide
+              step="record"
+              onAnswersChange={handleGuideAnswers}
+              defaultOpen={!isCompactTransitLayout}
+              storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+            />
 
-            <div className="transit-summary-grid">
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Target</span>
-                <strong>{target.name}</strong>
+            <MobileFoldSection
+              compact={isCompactTransitLayout}
+              title="Record context"
+            >
+              <div className="transit-summary-grid">
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Target</span>
+                  <strong>{target.name}</strong>
+                </div>
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Sector</span>
+                  <strong>{result.sector}</strong>
+                </div>
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Frames</span>
+                  <strong>{result.frame_count.toLocaleString()}</strong>
+                </div>
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Comparisons</span>
+                  <strong>{result.comparison_count}</strong>
+                </div>
               </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Sector</span>
-                <strong>{result.sector}</strong>
-              </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Frames</span>
-                <strong>{result.frame_count.toLocaleString()}</strong>
-              </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Comparisons</span>
-                <strong>{result.comparison_count}</strong>
-              </div>
-            </div>
+            </MobileFoldSection>
 
             {/* Fit result summary in Record step */}
             {fitResult && (
-              <div className="transit-record-fit-summary">
-                <h4>Transit Fit Result</h4>
-                <div className="transit-fit-params-grid">
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Rp/R*</span>
-                    <strong>{fitResult.fitted_params.rp_rs.toFixed(5)} <span className="transit-fit-param-err">± {fitResult.fitted_params.rp_rs_err.toFixed(5)}</span></strong>
-                    <p className="transit-fit-param-desc">
-                      Planet-to-star radius ratio. Rp/R* = {fitResult.fitted_params.rp_rs.toFixed(4)} means the planet's
-                      radius is about {(fitResult.fitted_params.rp_rs * 100).toFixed(1)}% of the host star,
-                      causing a {((fitResult.fitted_params.rp_rs ** 2) * 100).toFixed(2)}% dip in brightness during transit.
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">a/R*</span>
-                    <strong>{fitResult.fitted_params.a_rs.toFixed(2)} <span className="transit-fit-param-err">± {fitResult.fitted_params.a_rs_err.toFixed(2)}</span></strong>
-                    <p className="transit-fit-param-desc">
-                      Scaled semi-major axis (orbital distance in units of stellar radii).
-                      The planet orbits at {fitResult.fitted_params.a_rs.toFixed(1)}x the star's radius from its center.
-                      {fitResult.fitted_params.a_rs < 5 ? ' Very close — a "hot" exoplanet.' : ''}
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Inclination</span>
-                    <strong>{fitResult.fitted_params.inclination.toFixed(2)}° <span className="transit-fit-param-err">± {fitResult.fitted_params.inclination_err.toFixed(2)}°</span></strong>
-                    <p className="transit-fit-param-desc">
-                      Orbital inclination relative to our line of sight. 90° = edge-on.
-                      {fitResult.fitted_params.inclination > 88
-                        ? ' Nearly edge-on — deep, symmetric transit.'
-                        : fitResult.fitted_params.inclination > 85
-                          ? ' Slightly tilted — transit crosses near the center.'
-                          : ' Moderate tilt — may produce a grazing transit.'}
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Period</span>
-                    <strong>{fitResult.period.toFixed(6)} d</strong>
-                    <p className="transit-fit-param-desc">
-                      Orbital period — the planet completes one orbit every {fitResult.period.toFixed(4)} days
-                      ({(fitResult.period * 24).toFixed(1)} hours).
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Limb Darkening</span>
-                    <strong>u₁ = {fitResult.fitted_params.u1.toFixed(3)}, u₂ = {fitResult.fitted_params.u2.toFixed(3)}</strong>
-                    <p className="transit-fit-param-desc">
-                      Quadratic limb darkening coefficients describe how the star appears
-                      darker at its edges. Affects the transit shape during ingress/egress.
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Fit Quality</span>
-                    <strong>χ²_red = {fitResult.fitted_params.reduced_chi_squared.toFixed(3)}</strong>
-                    <p className="transit-fit-param-desc">
-                      Reduced chi-squared measures goodness of fit.
-                      {fitResult.fitted_params.reduced_chi_squared < 1.5
-                        ? ' Close to 1.0 — good fit to the data.'
-                        : fitResult.fitted_params.reduced_chi_squared < 3
-                          ? ' Moderate — the model captures the main signal but there is scatter.'
-                          : ' High — significant residuals remain; consider adjusting parameters.'}
-                    </p>
+              <MobileFoldSection
+                compact={isCompactTransitLayout}
+                title="Transit fit summary"
+              >
+                <div className="transit-record-fit-summary">
+                  <h4>Transit Fit Result</h4>
+                  <div className="transit-fit-params-grid">
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Rp/R*</span>
+                      <strong>{fitResult.fitted_params.rp_rs.toFixed(5)} <span className="transit-fit-param-err">± {fitResult.fitted_params.rp_rs_err.toFixed(5)}</span></strong>
+                      <p className="transit-fit-param-desc">
+                        Planet-to-star radius ratio. Rp/R* = {fitResult.fitted_params.rp_rs.toFixed(4)} means the planet's
+                        radius is about {(fitResult.fitted_params.rp_rs * 100).toFixed(1)}% of the host star,
+                        causing a {((fitResult.fitted_params.rp_rs ** 2) * 100).toFixed(2)}% dip in brightness during transit.
+                      </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">a/R*</span>
+                      <strong>{fitResult.fitted_params.a_rs.toFixed(2)} <span className="transit-fit-param-err">± {fitResult.fitted_params.a_rs_err.toFixed(2)}</span></strong>
+                      <p className="transit-fit-param-desc">
+                        Scaled semi-major axis (orbital distance in units of stellar radii).
+                        The planet orbits at {fitResult.fitted_params.a_rs.toFixed(1)}x the star's radius from its center.
+                        {fitResult.fitted_params.a_rs < 5 ? ' Very close — a "hot" exoplanet.' : ''}
+                      </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Inclination</span>
+                      <strong>{fitResult.fitted_params.inclination.toFixed(2)}° <span className="transit-fit-param-err">± {fitResult.fitted_params.inclination_err.toFixed(2)}°</span></strong>
+                      <p className="transit-fit-param-desc">
+                        Orbital inclination relative to our line of sight. 90° = edge-on.
+                        {fitResult.fitted_params.inclination > 88
+                          ? ' Nearly edge-on — deep, symmetric transit.'
+                          : fitResult.fitted_params.inclination > 85
+                            ? ' Slightly tilted — transit crosses near the center.'
+                            : ' Moderate tilt — may produce a grazing transit.'}
+                      </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Period</span>
+                      <strong>{fitResult.period.toFixed(6)} d</strong>
+                      <p className="transit-fit-param-desc">
+                        Orbital period — the planet completes one orbit every {fitResult.period.toFixed(4)} days
+                        ({(fitResult.period * 24).toFixed(1)} hours).
+                      </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Limb Darkening</span>
+                      <strong>u₁ = {fitResult.fitted_params.u1.toFixed(3)}, u₂ = {fitResult.fitted_params.u2.toFixed(3)}</strong>
+                      <p className="transit-fit-param-desc">
+                        Quadratic limb darkening coefficients describe how the star appears
+                        darker at its edges. Affects the transit shape during ingress/egress.
+                      </p>
+                      {fitLimbDarkeningExplanation && (
+                        <p className="transit-fit-param-note">
+                          {fitLimbDarkeningExplanation}
+                        </p>
+                      )}
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Fit Quality</span>
+                      <strong>χ²_red = {fitResult.fitted_params.reduced_chi_squared.toFixed(3)}</strong>
+                      <p className="transit-fit-param-desc">
+                        Reduced chi-squared measures goodness of fit.
+                        {fitResult.fitted_params.reduced_chi_squared < 1.5
+                          ? ' Close to 1.0 — good fit to the data.'
+                          : fitResult.fitted_params.reduced_chi_squared < 3
+                            ? ' Moderate — the model captures the main signal but there is scatter.'
+                            : ' High — significant residuals remain; consider adjusting parameters.'}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </MobileFoldSection>
             )}
 
             {!recordTemplate && recordLoading && (
@@ -3605,6 +3777,7 @@ export function TransitLab({
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }

@@ -175,6 +175,36 @@ function AladinViewer(
     },
   }), []);
 
+  // Shorten coordinate grid labels: "HH MM SS.mmm" → "HH MM SS"
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const trimCooLabel = (el: Element) => {
+      const text = el.textContent ?? '';
+      const trimmed = text.replace(/(\d{2} \d{2} \d{2})\.\d+/g, '$1').replace(/([+-]?\d{2} \d{2} \d{2})\.\d+/g, '$1');
+      if (trimmed !== text) el.textContent = trimmed;
+    };
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof Element) {
+            if (node.classList.contains('aladin-overlay-label') || node.classList.contains('aladin-view-label')) {
+              trimCooLabel(node);
+            }
+            node.querySelectorAll('.aladin-overlay-label, .aladin-view-label').forEach(trimCooLabel);
+          }
+        }
+        if (mutation.type === 'characterData' && mutation.target.parentElement) {
+          const parent = mutation.target.parentElement;
+          if (parent.classList.contains('aladin-overlay-label') || parent.classList.contains('aladin-view-label')) {
+            trimCooLabel(parent);
+          }
+        }
+      }
+    });
+    observer.observe(containerRef.current, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, []);
+
   // Initialize once
   useEffect(() => {
     let cancelled = false;

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from config import BASE_URL, RECORD_REQUIRE_LOGIN
+from config import ADMIN_EMAILS, BASE_URL, RECORD_REQUIRE_LOGIN
 from routers.auth import get_current_user
 from schemas.record import (
     RecordListItemResponse,
@@ -12,9 +12,17 @@ from schemas.record import (
 )
 from services.rate_limit_service import enforce_rate_limit
 from services import record_service
-from db import create_or_get_share_token, get_analysis_record_by_token
+from db import create_or_get_share_token, get_analysis_record_by_token, get_guide_answer_stats
 
 router = APIRouter(tags=["records"])
+
+
+@router.get("/records/admin/guide-stats")
+def admin_guide_stats(request: Request):
+    user = get_current_user(request)
+    if not user or user["email"].lower() not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return get_guide_answer_stats()
 
 
 @router.get("/records/templates/{template_id}", response_model=RecordTemplateResponse)
