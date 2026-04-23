@@ -3464,10 +3464,7 @@ body {
   }
 
   .lab-header-preview {
-    width: 100%;
-    max-width: 340px;
-    height: auto;
-    aspect-ratio: 16 / 10;
+    display: none;
   }
 
   .lab-sidebar,
@@ -7251,6 +7248,68 @@ body {
   color: var(--text-secondary);
 }
 
+.transit-mobile-fold {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.transit-mobile-fold-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.transit-mobile-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.transit-mobile-fold-icon {
+  width: 12px;
+  height: 12px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.transit-mobile-fold-icon::before,
+.transit-mobile-fold-icon::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 12px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: var(--text-secondary);
+  transform: translate(-50%, -50%);
+}
+
+.transit-mobile-fold-icon::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+  transition: transform 0.18s ease;
+}
+
+.transit-mobile-fold[open] .transit-mobile-fold-icon::after {
+  transform: translate(-50%, -50%) rotate(0deg);
+}
+
+.transit-mobile-fold-body {
+  padding: 0 14px 14px;
+}
+
+.transit-mobile-fold .transit-summary-grid,
+.transit-mobile-fold .transit-record-fit-summary {
+  margin-top: 0;
+}
+
 .transit-sidebar-scroll {
   display: flex;
   flex-direction: column;
@@ -7391,6 +7450,31 @@ body {
 
   .plot-canvas--fit-preview {
     height: 500px;
+  }
+
+  .transit-mobile-sidebar-toggle {
+    display: flex;
+  }
+
+  .lab-sidebar,
+  .transit-lab .lab-sidebar {
+    max-height: none;
+    overflow: visible;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .transit-sidebar-scroll {
+    display: none;
+  }
+
+  .transit-mobile-sidebar-open .transit-sidebar-scroll {
+    display: flex;
+  }
+
+  .transit-mobile-sidebar-open .transit-mobile-sidebar-toggle {
+    border-color: rgba(232, 114, 42, 0.35);
+    background: rgba(232, 114, 42, 0.08);
   }
 }
 
@@ -7695,30 +7779,6 @@ body {
     background: rgba(255, 255, 255, 0.18);
   }
 
-  .transit-mobile-sidebar-toggle {
-    display: flex;
-  }
-
-  .lab-sidebar,
-  .transit-lab .lab-sidebar {
-    max-height: none;
-    overflow: visible;
-    padding: 12px;
-    gap: 12px;
-  }
-
-  .transit-sidebar-scroll {
-    display: none;
-  }
-
-  .transit-mobile-sidebar-open .transit-sidebar-scroll {
-    display: flex;
-  }
-
-  .transit-mobile-sidebar-open .transit-mobile-sidebar-toggle {
-    border-color: rgba(232, 114, 42, 0.35);
-    background: rgba(232, 114, 42, 0.08);
-  }
 }
 
 @media (max-width: 640px) {

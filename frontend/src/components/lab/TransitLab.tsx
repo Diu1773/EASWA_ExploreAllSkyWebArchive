@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react';
 import {
   downloadMyRecordPhotometryCsv,
   fetchMyRecordSubmission,
@@ -138,11 +138,77 @@ function describeLimbDarkeningSource(source: string | null | undefined): string 
   return source.replace(/_/g, ' ');
 }
 
-function StepGuide({ step, onAnswersChange }: { step: TransitStep; onAnswersChange?: (answers: GuideAnswers) => void }) {
-  const storageKey = `easwa_guide_open_${step}`;
+function useCompactTransitLayout() {
+  const [compact, setCompact] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 980px)').matches : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 980px)');
+    const handleChange = (event: MediaQueryListEvent) => {
+      setCompact(event.matches);
+    };
+
+    setCompact(media.matches);
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handleChange);
+      return () => media.removeEventListener('change', handleChange);
+    }
+
+    media.addListener(handleChange);
+    return () => media.removeListener(handleChange);
+  }, []);
+
+  return compact;
+}
+
+function MobileFoldSection({
+  compact,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  compact: boolean;
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  if (!compact) return <>{children}</>;
+
+  return (
+    <details className="transit-mobile-fold" open={defaultOpen || undefined}>
+      <summary className="transit-mobile-fold-summary">
+        <span>{title}</span>
+        <span className="transit-mobile-fold-icon" aria-hidden="true" />
+      </summary>
+      <div className="transit-mobile-fold-body">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+function StepGuide({
+  step,
+  onAnswersChange,
+  defaultOpen = true,
+  storageKeySuffix = 'default',
+}: {
+  step: TransitStep;
+  onAnswersChange?: (answers: GuideAnswers) => void;
+  defaultOpen?: boolean;
+  storageKeySuffix?: string;
+}) {
+  const storageKey = `easwa_guide_open_${step}_${storageKeySuffix}`;
   const [open, setOpen] = useState(() => {
-    try { return localStorage.getItem(storageKey) !== 'false'; }
-    catch { return true; }
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored === null) return defaultOpen;
+      return stored !== 'false';
+    } catch {
+      return defaultOpen;
+    }
   });
   const [answers, setAnswers] = useState<GuideAnswers>({});
   const questions = STEP_GUIDES[step];
@@ -304,6 +370,7 @@ export function TransitLab({
   draftId = null,
   seedRecordId = null,
 }: TransitLabProps) {
+  const isCompactTransitLayout = useCompactTransitLayout();
   const selectedIds = useAppStore((s) => s.selectedObservationIds);
   const selectAllObservations = useAppStore((s) => s.selectAllObservations);
   const user = useAuthStore((s) => s.user);
@@ -2389,7 +2456,12 @@ export function TransitLab({
               )}
             </div>
 
-            <StepGuide step="select" onAnswersChange={handleGuideAnswers} />
+            <StepGuide
+              step="select"
+              onAnswersChange={handleGuideAnswers}
+              defaultOpen={!isCompactTransitLayout}
+              storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+            />
 
             <div className={`transit-field-size-card ${!preview ? 'transit-field-size-card--empty' : ''}`}>
               <div>
@@ -2441,36 +2513,41 @@ export function TransitLab({
                   onMoveStar={handleMoveStar}
                 />
 
-                <div className="transit-summary-grid">
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Field View</span>
-                    <strong>
-                      {cutoutSizePx} px / {cutoutArcmin}'
-                    </strong>
+                <MobileFoldSection
+                  compact={isCompactTransitLayout}
+                  title="Cutout details"
+                >
+                  <div className="transit-summary-grid">
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Field View</span>
+                      <strong>
+                        {cutoutSizePx} px / {cutoutArcmin}'
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Loaded Cutout</span>
+                      <strong>
+                        {preview.cutout_size_px} px / {loadedCutoutArcmin}'
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Cadences</span>
+                      <strong>{preview.frame_count.toLocaleString()}</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Preview Frame</span>
+                      <strong>
+                        {currentFrameIndex !== null
+                          ? `${currentFrameIndex + 1} / ${preview.frame_count}`
+                          : 'Median'}
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Time Span</span>
+                      <strong>{(preview.time_end - preview.time_start).toFixed(2)} d</strong>
+                    </div>
                   </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Loaded Cutout</span>
-                    <strong>
-                      {preview.cutout_size_px} px / {loadedCutoutArcmin}'
-                    </strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Cadences</span>
-                    <strong>{preview.frame_count.toLocaleString()}</strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Preview Frame</span>
-                    <strong>
-                      {currentFrameIndex !== null
-                        ? `${currentFrameIndex + 1} / ${preview.frame_count}`
-                        : 'Median'}
-                    </strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Time Span</span>
-                    <strong>{(preview.time_end - preview.time_start).toFixed(2)} d</strong>
-                  </div>
-                </div>
+                </MobileFoldSection>
               </>
             )}
 
@@ -2515,33 +2592,43 @@ export function TransitLab({
               )}
             </div>
 
-            <StepGuide step="run" onAnswersChange={handleGuideAnswers} />
+            <StepGuide
+              step="run"
+              onAnswersChange={handleGuideAnswers}
+              defaultOpen={!isCompactTransitLayout}
+              storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+            />
 
             {effectiveTargetPosition ? (
               <>
-                <div className="transit-summary-grid">
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Target</span>
-                    <strong>
-                      ({effectiveTargetPosition.x.toFixed(1)},{' '}
-                      {effectiveTargetPosition.y.toFixed(1)})
-                    </strong>
+                <MobileFoldSection
+                  compact={isCompactTransitLayout}
+                  title="Photometry inputs"
+                >
+                  <div className="transit-summary-grid">
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Target</span>
+                      <strong>
+                        ({effectiveTargetPosition.x.toFixed(1)},{' '}
+                        {effectiveTargetPosition.y.toFixed(1)})
+                      </strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Comparisons</span>
+                      <strong>{comparisonStars.length}</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Field</span>
+                      <strong>{cutoutSizePx} px</strong>
+                    </div>
+                    <div className="transit-summary-card">
+                      <span className="transit-summary-label">Cadences</span>
+                      <strong>
+                        {(preview?.frame_count ?? activeObservation?.frame_count ?? 0).toLocaleString()}
+                      </strong>
+                    </div>
                   </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Comparisons</span>
-                    <strong>{comparisonStars.length}</strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Field</span>
-                    <strong>{cutoutSizePx} px</strong>
-                  </div>
-                  <div className="transit-summary-card">
-                    <span className="transit-summary-label">Cadences</span>
-                    <strong>
-                      {(preview?.frame_count ?? activeObservation?.frame_count ?? 0).toLocaleString()}
-                    </strong>
-                  </div>
-                </div>
+                </MobileFoldSection>
 
                 {showRunProgress && (
                   <div className="transit-progress-wrapper">
@@ -2638,7 +2725,12 @@ export function TransitLab({
                 </div>
               </div>
 
-              <StepGuide step="comparisonqc" onAnswersChange={handleGuideAnswers} />
+              <StepGuide
+                step="comparisonqc"
+                onAnswersChange={handleGuideAnswers}
+                defaultOpen={!isCompactTransitLayout}
+                storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+              />
 
               {running && (
                 <div className="transit-progress-card" style={{ marginBottom: 16 }}>
@@ -2660,24 +2752,29 @@ export function TransitLab({
 
               {result ? (
                 <>
-                  <div className="transit-summary-grid">
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Candidates</span>
-                      <strong>{comparisonDiagnostics.length}</strong>
+                  <MobileFoldSection
+                    compact={isCompactTransitLayout}
+                    title="QC overview"
+                  >
+                    <div className="transit-summary-grid">
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Candidates</span>
+                        <strong>{comparisonDiagnostics.length}</strong>
+                      </div>
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Included</span>
+                        <strong>{qcIncludedDiagnostics.length}</strong>
+                      </div>
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Excluded</span>
+                        <strong>{qcExcludedCount}</strong>
+                      </div>
+                      <div className="transit-summary-card">
+                        <span className="transit-summary-label">Current Ensemble</span>
+                        <strong>{result.comparison_count}</strong>
+                      </div>
                     </div>
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Included</span>
-                      <strong>{qcIncludedDiagnostics.length}</strong>
-                    </div>
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Excluded</span>
-                      <strong>{qcExcludedCount}</strong>
-                    </div>
-                    <div className="transit-summary-card">
-                      <span className="transit-summary-label">Current Ensemble</span>
-                      <strong>{result.comparison_count}</strong>
-                    </div>
-                  </div>
+                  </MobileFoldSection>
 
                   {qcSelectionDirty && (
                     <div className="transit-callout" style={{ marginBottom: 16 }}>
@@ -2737,34 +2834,39 @@ export function TransitLab({
 
                       {selectedComparisonDiagnosticData && (
                         <>
-                          <div className="transit-summary-grid">
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Selected Pair</span>
-                              <strong>T / {selectedComparisonDiagnosticData.label}</strong>
+                          <MobileFoldSection
+                            compact={isCompactTransitLayout}
+                            title={`Selected pair: ${selectedComparisonDiagnosticData.label}`}
+                          >
+                            <div className="transit-summary-grid">
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Selected Pair</span>
+                                <strong>T / {selectedComparisonDiagnosticData.label}</strong>
+                              </div>
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Status</span>
+                                <strong>
+                                  {qcIncludedComparisonLabels.includes(
+                                    selectedComparisonDiagnosticData.label
+                                  )
+                                    ? 'Included'
+                                    : 'Excluded'}
+                                </strong>
+                              </div>
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Pair RMS</span>
+                                <strong>
+                                  {selectedComparisonDiagnosticData.differential_rms.toFixed(4)}
+                                </strong>
+                              </div>
+                              <div className="transit-summary-card">
+                                <span className="transit-summary-label">Pair MAD</span>
+                                <strong>
+                                  {selectedComparisonDiagnosticData.differential_mad.toFixed(4)}
+                                </strong>
+                              </div>
                             </div>
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Status</span>
-                              <strong>
-                                {qcIncludedComparisonLabels.includes(
-                                  selectedComparisonDiagnosticData.label
-                                )
-                                  ? 'Included'
-                                  : 'Excluded'}
-                              </strong>
-                            </div>
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Pair RMS</span>
-                              <strong>
-                                {selectedComparisonDiagnosticData.differential_rms.toFixed(4)}
-                              </strong>
-                            </div>
-                            <div className="transit-summary-card">
-                              <span className="transit-summary-label">Pair MAD</span>
-                              <strong>
-                                {selectedComparisonDiagnosticData.differential_mad.toFixed(4)}
-                              </strong>
-                            </div>
-                          </div>
+                          </MobileFoldSection>
 
                           <LightCurvePlot
                             data={selectedComparisonDiagnosticData.light_curve}
@@ -2840,26 +2942,36 @@ export function TransitLab({
                 </div>
               </div>
 
-              <StepGuide step="lightcurve" onAnswersChange={handleGuideAnswers} />
+              <StepGuide
+                step="lightcurve"
+                onAnswersChange={handleGuideAnswers}
+                defaultOpen={!isCompactTransitLayout}
+                storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+              />
 
-              <div className="transit-summary-grid">
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Frames</span>
-                  <strong>{result.frame_count.toLocaleString()}</strong>
+              <MobileFoldSection
+                compact={isCompactTransitLayout}
+                title="Light curve stats"
+              >
+                <div className="transit-summary-grid">
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Frames</span>
+                    <strong>{result.frame_count.toLocaleString()}</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Comparisons</span>
+                    <strong>{result.comparison_count}</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Median Target</span>
+                    <strong>{result.target_median_flux.toLocaleString()}</strong>
+                  </div>
+                  <div className="transit-summary-card">
+                    <span className="transit-summary-label">Median Comp</span>
+                    <strong>{result.comparison_median_flux.toLocaleString()}</strong>
+                  </div>
                 </div>
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Comparisons</span>
-                  <strong>{result.comparison_count}</strong>
-                </div>
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Median Target</span>
-                  <strong>{result.target_median_flux.toLocaleString()}</strong>
-                </div>
-                <div className="transit-summary-card">
-                  <span className="transit-summary-label">Median Comp</span>
-                  <strong>{result.comparison_median_flux.toLocaleString()}</strong>
-                </div>
-              </div>
+              </MobileFoldSection>
             </div>
 
             <LightCurvePlot
@@ -2905,7 +3017,12 @@ export function TransitLab({
                 </div>
               </div>
 
-              <StepGuide step="transitfit" onAnswersChange={handleGuideAnswers} />
+              <StepGuide
+                step="transitfit"
+                onAnswersChange={handleGuideAnswers}
+                defaultOpen={!isCompactTransitLayout}
+                storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+              />
 
               <div className="transit-callout">
                 Black points are the exact samples used in the fit. Red is the best-fit
@@ -3288,97 +3405,112 @@ export function TransitLab({
               </div>
             </div>
 
-            <StepGuide step="record" onAnswersChange={handleGuideAnswers} />
+            <StepGuide
+              step="record"
+              onAnswersChange={handleGuideAnswers}
+              defaultOpen={!isCompactTransitLayout}
+              storageKeySuffix={isCompactTransitLayout ? 'mobile' : 'desktop'}
+            />
 
-            <div className="transit-summary-grid">
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Target</span>
-                <strong>{target.name}</strong>
+            <MobileFoldSection
+              compact={isCompactTransitLayout}
+              title="Record context"
+            >
+              <div className="transit-summary-grid">
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Target</span>
+                  <strong>{target.name}</strong>
+                </div>
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Sector</span>
+                  <strong>{result.sector}</strong>
+                </div>
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Frames</span>
+                  <strong>{result.frame_count.toLocaleString()}</strong>
+                </div>
+                <div className="transit-summary-card">
+                  <span className="transit-summary-label">Comparisons</span>
+                  <strong>{result.comparison_count}</strong>
+                </div>
               </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Sector</span>
-                <strong>{result.sector}</strong>
-              </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Frames</span>
-                <strong>{result.frame_count.toLocaleString()}</strong>
-              </div>
-              <div className="transit-summary-card">
-                <span className="transit-summary-label">Comparisons</span>
-                <strong>{result.comparison_count}</strong>
-              </div>
-            </div>
+            </MobileFoldSection>
 
             {/* Fit result summary in Record step */}
             {fitResult && (
-              <div className="transit-record-fit-summary">
-                <h4>Transit Fit Result</h4>
-                <div className="transit-fit-params-grid">
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Rp/R*</span>
-                    <strong>{fitResult.fitted_params.rp_rs.toFixed(5)} <span className="transit-fit-param-err">± {fitResult.fitted_params.rp_rs_err.toFixed(5)}</span></strong>
-                    <p className="transit-fit-param-desc">
-                      Planet-to-star radius ratio. Rp/R* = {fitResult.fitted_params.rp_rs.toFixed(4)} means the planet's
-                      radius is about {(fitResult.fitted_params.rp_rs * 100).toFixed(1)}% of the host star,
-                      causing a {((fitResult.fitted_params.rp_rs ** 2) * 100).toFixed(2)}% dip in brightness during transit.
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">a/R*</span>
-                    <strong>{fitResult.fitted_params.a_rs.toFixed(2)} <span className="transit-fit-param-err">± {fitResult.fitted_params.a_rs_err.toFixed(2)}</span></strong>
-                    <p className="transit-fit-param-desc">
-                      Scaled semi-major axis (orbital distance in units of stellar radii).
-                      The planet orbits at {fitResult.fitted_params.a_rs.toFixed(1)}x the star's radius from its center.
-                      {fitResult.fitted_params.a_rs < 5 ? ' Very close — a "hot" exoplanet.' : ''}
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Inclination</span>
-                    <strong>{fitResult.fitted_params.inclination.toFixed(2)}° <span className="transit-fit-param-err">± {fitResult.fitted_params.inclination_err.toFixed(2)}°</span></strong>
-                    <p className="transit-fit-param-desc">
-                      Orbital inclination relative to our line of sight. 90° = edge-on.
-                      {fitResult.fitted_params.inclination > 88
-                        ? ' Nearly edge-on — deep, symmetric transit.'
-                        : fitResult.fitted_params.inclination > 85
-                          ? ' Slightly tilted — transit crosses near the center.'
-                          : ' Moderate tilt — may produce a grazing transit.'}
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Period</span>
-                    <strong>{fitResult.period.toFixed(6)} d</strong>
-                    <p className="transit-fit-param-desc">
-                      Orbital period — the planet completes one orbit every {fitResult.period.toFixed(4)} days
-                      ({(fitResult.period * 24).toFixed(1)} hours).
-                    </p>
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Limb Darkening</span>
-                    <strong>u₁ = {fitResult.fitted_params.u1.toFixed(3)}, u₂ = {fitResult.fitted_params.u2.toFixed(3)}</strong>
-                    <p className="transit-fit-param-desc">
-                      Quadratic limb darkening coefficients describe how the star appears
-                      darker at its edges. Affects the transit shape during ingress/egress.
-                    </p>
-                    {fitLimbDarkeningExplanation && (
-                      <p className="transit-fit-param-note">
-                        {fitLimbDarkeningExplanation}
+              <MobileFoldSection
+                compact={isCompactTransitLayout}
+                title="Transit fit summary"
+              >
+                <div className="transit-record-fit-summary">
+                  <h4>Transit Fit Result</h4>
+                  <div className="transit-fit-params-grid">
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Rp/R*</span>
+                      <strong>{fitResult.fitted_params.rp_rs.toFixed(5)} <span className="transit-fit-param-err">± {fitResult.fitted_params.rp_rs_err.toFixed(5)}</span></strong>
+                      <p className="transit-fit-param-desc">
+                        Planet-to-star radius ratio. Rp/R* = {fitResult.fitted_params.rp_rs.toFixed(4)} means the planet's
+                        radius is about {(fitResult.fitted_params.rp_rs * 100).toFixed(1)}% of the host star,
+                        causing a {((fitResult.fitted_params.rp_rs ** 2) * 100).toFixed(2)}% dip in brightness during transit.
                       </p>
-                    )}
-                  </div>
-                  <div className="transit-fit-param-card">
-                    <span className="transit-fit-param-label">Fit Quality</span>
-                    <strong>χ²_red = {fitResult.fitted_params.reduced_chi_squared.toFixed(3)}</strong>
-                    <p className="transit-fit-param-desc">
-                      Reduced chi-squared measures goodness of fit.
-                      {fitResult.fitted_params.reduced_chi_squared < 1.5
-                        ? ' Close to 1.0 — good fit to the data.'
-                        : fitResult.fitted_params.reduced_chi_squared < 3
-                          ? ' Moderate — the model captures the main signal but there is scatter.'
-                          : ' High — significant residuals remain; consider adjusting parameters.'}
-                    </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">a/R*</span>
+                      <strong>{fitResult.fitted_params.a_rs.toFixed(2)} <span className="transit-fit-param-err">± {fitResult.fitted_params.a_rs_err.toFixed(2)}</span></strong>
+                      <p className="transit-fit-param-desc">
+                        Scaled semi-major axis (orbital distance in units of stellar radii).
+                        The planet orbits at {fitResult.fitted_params.a_rs.toFixed(1)}x the star's radius from its center.
+                        {fitResult.fitted_params.a_rs < 5 ? ' Very close — a "hot" exoplanet.' : ''}
+                      </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Inclination</span>
+                      <strong>{fitResult.fitted_params.inclination.toFixed(2)}° <span className="transit-fit-param-err">± {fitResult.fitted_params.inclination_err.toFixed(2)}°</span></strong>
+                      <p className="transit-fit-param-desc">
+                        Orbital inclination relative to our line of sight. 90° = edge-on.
+                        {fitResult.fitted_params.inclination > 88
+                          ? ' Nearly edge-on — deep, symmetric transit.'
+                          : fitResult.fitted_params.inclination > 85
+                            ? ' Slightly tilted — transit crosses near the center.'
+                            : ' Moderate tilt — may produce a grazing transit.'}
+                      </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Period</span>
+                      <strong>{fitResult.period.toFixed(6)} d</strong>
+                      <p className="transit-fit-param-desc">
+                        Orbital period — the planet completes one orbit every {fitResult.period.toFixed(4)} days
+                        ({(fitResult.period * 24).toFixed(1)} hours).
+                      </p>
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Limb Darkening</span>
+                      <strong>u₁ = {fitResult.fitted_params.u1.toFixed(3)}, u₂ = {fitResult.fitted_params.u2.toFixed(3)}</strong>
+                      <p className="transit-fit-param-desc">
+                        Quadratic limb darkening coefficients describe how the star appears
+                        darker at its edges. Affects the transit shape during ingress/egress.
+                      </p>
+                      {fitLimbDarkeningExplanation && (
+                        <p className="transit-fit-param-note">
+                          {fitLimbDarkeningExplanation}
+                        </p>
+                      )}
+                    </div>
+                    <div className="transit-fit-param-card">
+                      <span className="transit-fit-param-label">Fit Quality</span>
+                      <strong>χ²_red = {fitResult.fitted_params.reduced_chi_squared.toFixed(3)}</strong>
+                      <p className="transit-fit-param-desc">
+                        Reduced chi-squared measures goodness of fit.
+                        {fitResult.fitted_params.reduced_chi_squared < 1.5
+                          ? ' Close to 1.0 — good fit to the data.'
+                          : fitResult.fitted_params.reduced_chi_squared < 3
+                            ? ' Moderate — the model captures the main signal but there is scatter.'
+                            : ' High — significant residuals remain; consider adjusting parameters.'}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </MobileFoldSection>
             )}
 
             {!recordTemplate && recordLoading && (
