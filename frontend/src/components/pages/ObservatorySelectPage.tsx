@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
+import { ImageWithFallback } from '../layout/ImageWithFallback';
+import { ASTRO_FALLBACK_IMAGE, KMT_SITE_IMAGES } from '../../data/imageSources';
 import { buildExplorerHref } from '../../utils/explorerNavigation';
 
-// 관측소 사진: public/images/ 폴더에 파일 추가 후 image 경로 채우면 바로 적용
 const OBSERVATORIES = [
   {
     id: 'ctio',
@@ -9,7 +10,7 @@ const OBSERVATORIES = [
     country: '칠레',
     location: '세로 톨롤로, 칠레 북부 · 해발 2,207 m',
     description: '남미 구간 담당. 은하 벌지가 하늘 높이 뜨는 최적 위치.',
-    image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/KMTNet_CTIO_small.jpg/800px-KMTNet_CTIO_small.jpg' as string | null,
+    image: KMT_SITE_IMAGES.ctio as string | null,
   },
   {
     id: 'saao',
@@ -17,7 +18,7 @@ const OBSERVATORIES = [
     country: '남아프리카',
     location: '서덜랜드, 남아프리카공화국 · 해발 1,760 m',
     description: 'CTIO와 SSO 사이의 관측 공백을 잇는 핵심 거점.',
-    image: null as string | null, // → '/images/kmtnet-saao.jpg' (파일 추가 후 활성화)
+    image: KMT_SITE_IMAGES.saao as string | null,
   },
   {
     id: 'sso',
@@ -25,7 +26,7 @@ const OBSERVATORIES = [
     country: '호주',
     location: '사이딩 스프링, 뉴사우스웨일스 · 해발 1,165 m',
     description: '아시아-태평양 시간대를 커버하며 24시간 연속망을 완성.',
-    image: null as string | null, // → '/images/kmtnet-sso.jpg' (파일 추가 후 활성화)
+    image: KMT_SITE_IMAGES.sso as string | null,
   },
 ];
 
@@ -50,10 +51,12 @@ export function ObservatorySelectPage() {
               {/* 사진 영역 */}
               <div className="edu-site-photo-wrap">
                 {site.image ? (
-                  <img
+                  <ImageWithFallback
                     src={site.image}
+                    fallbackSrc={ASTRO_FALLBACK_IMAGE}
                     alt={`KMTNet ${site.code} 관측소`}
                     className="edu-site-photo"
+                    loading="lazy"
                   />
                 ) : (
                   <div className="edu-site-photo-placeholder">

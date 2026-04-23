@@ -1,9 +1,7 @@
 import { Link } from 'react-router-dom';
+import { ImageWithFallback } from '../layout/ImageWithFallback';
+import { ASTRO_FALLBACK_IMAGE, TESS_BANNER_IMAGE } from '../../data/imageSources';
 import { buildExplorerHref } from '../../utils/explorerNavigation';
-
-// HD 189733b 외계행성 대기 관측 이미지 (ESA/Hubble, CC BY 4.0)
-const TESS_BANNER =
-  'https://cdn.esahubble.org/archives/images/screen/heic0612b.jpg';
 
 const TESS_EXPLORER = buildExplorerHref({
   moduleId: 'tess',
@@ -139,8 +137,9 @@ export function TessIntroPage() {
 
         {/* 페이지 배너 이미지 */}
         <div className="edu-page-banner-wrap">
-          <img
-            src={TESS_BANNER}
+          <ImageWithFallback
+            src={TESS_BANNER_IMAGE}
+            fallbackSrc={ASTRO_FALLBACK_IMAGE}
             alt="ESA/Hubble — 외계행성 HD 189733b 대기 관측 아티스트 인상화"
             className="edu-page-banner-img"
             loading="lazy"

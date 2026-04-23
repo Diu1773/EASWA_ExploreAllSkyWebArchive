@@ -1,15 +1,10 @@
 import { Link } from 'react-router-dom';
-
-// 우리 은하 파노라마 — 은하 벌지가 선명히 보임 (public/milkyway.png)
-const KMT_BANNER = '/milkyway.png';
-
-// SAAO Sutherland 관측소 (Wikimedia Commons)
-const SAAO_IMG =
-  'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/SAAO_observatory_sutherland.jpg/800px-SAAO_observatory_sutherland.jpg';
-
-// SSO Siding Spring 관측소 (Wikimedia Commons)
-const SSO_IMG =
-  'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Siding_Spring_Observatory_2021.jpg/800px-Siding_Spring_Observatory_2021.jpg';
+import { ImageWithFallback } from '../layout/ImageWithFallback';
+import {
+  ASTRO_FALLBACK_IMAGE,
+  KMT_BANNER_IMAGE,
+  KMT_SITE_IMAGES,
+} from '../../data/imageSources';
 
 function MicrolensingDiagram() {
   return (
@@ -130,31 +125,30 @@ function MagCurve() {
   );
 }
 
-// 관측소 사진: public/images/ 폴더에 파일 추가 후 image 경로 채우면 바로 적용
 const KMT_SITES = [
   {
     code: 'CTIO',
     country: '칠레',
     location: '세로 톨롤로, 칠레 북부',
     detail: '해발 2,207 m. 남미 구간을 담당하며 은하 벌지가 하늘 높이 뜨는 위치.',
-    image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/KMTNet_CTIO_small.jpg/800px-KMTNet_CTIO_small.jpg' as string | null,
-    imageCredit: 'KASI / KMTNet',
+    image: KMT_SITE_IMAGES.ctio as string | null,
+    imageCredit: 'KMTNet official website',
   },
   {
     code: 'SAAO',
     country: '남아프리카',
     location: '서덜랜드, 남아프리카공화국',
     detail: '해발 1,760 m. 경도상 중간에 위치해 CTIO와 SSO 사이의 관측 공백을 잇는 핵심 거점.',
-    image: SAAO_IMG as string | null,
-    imageCredit: 'Wikimedia Commons',
+    image: KMT_SITE_IMAGES.saao as string | null,
+    imageCredit: 'KMTNet official website',
   },
   {
     code: 'SSO',
     country: '호주',
     location: '사이딩 스프링, 뉴사우스웨일스',
     detail: '해발 1,165 m. 아시아-태평양 시간대를 커버하며 24시간 연속 감시망을 완성.',
-    image: SSO_IMG as string | null,
-    imageCredit: 'Wikimedia Commons',
+    image: KMT_SITE_IMAGES.sso as string | null,
+    imageCredit: 'KMTNet official website',
   },
 ];
 
@@ -184,13 +178,14 @@ export function KmtnetIntroPage() {
 
         {/* 페이지 배너 이미지 — 은하 중심부 */}
         <div className="edu-page-banner-wrap">
-          <img
-            src={KMT_BANNER}
-            alt="우리 은하 파노라마 — 은하 벌지 영역"
+          <ImageWithFallback
+            src={KMT_BANNER_IMAGE}
+            fallbackSrc={ASTRO_FALLBACK_IMAGE}
+            alt="KMTNet 공식 홈페이지 배너 이미지"
             className="edu-page-banner-img"
             loading="lazy"
           />
-          <span className="edu-page-banner-credit">Milky Way panorama · Galactic Bulge</span>
+          <span className="edu-page-banner-credit">Image: KMTNet official website</span>
         </div>
 
         {/* 현상 설명: 다이어그램 + 텍스트 */}
@@ -244,11 +239,12 @@ export function KmtnetIntroPage() {
           <div className="edu-sites-grid">
             {KMT_SITES.map((site) => (
               <div key={site.code} className="edu-site-card">
-                {/* 사진 영역: image가 null이면 플레이스홀더, 경로 채우면 바로 적용 */}
+                {/* 사진 영역 */}
                 <div className="edu-site-photo-wrap">
                   {site.image ? (
-                    <img
+                    <ImageWithFallback
                       src={site.image}
+                      fallbackSrc={ASTRO_FALLBACK_IMAGE}
                       alt={`KMTNet ${site.code} 관측소`}
                       className="edu-site-photo"
                       loading="lazy"

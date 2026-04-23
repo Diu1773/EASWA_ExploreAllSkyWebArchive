@@ -1,14 +1,12 @@
 import { Link } from 'react-router-dom';
+import { ImageWithFallback } from '../layout/ImageWithFallback';
+import {
+  ASTRO_FALLBACK_IMAGE,
+  HOME_HERO_BG,
+  KMT_MODULE_IMAGE,
+  TESS_MODULE_IMAGE,
+} from '../../data/imageSources';
 import { buildExplorerHref } from '../../utils/explorerNavigation';
-
-const TESS_IMG =
-  'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/TESS_spacecraft_artist_concept_%28cropped%29.jpg/1280px-TESS_spacecraft_artist_concept_%28cropped%29.jpg';
-const KMT_IMG =
-  'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/KMTNet_CTIO_small.jpg/800px-KMTNet_CTIO_small.jpg';
-
-// 홈 히어로 배경: Hubble Ultra Deep Field (ESA/Hubble, CC BY 4.0)
-const HERO_BG =
-  'https://cdn.esahubble.org/archives/images/screen/heic0406a.jpg';
 
 const TESS_EXPLORER = buildExplorerHref({
   moduleId: 'tess',
@@ -19,9 +17,9 @@ const TESS_EXPLORER = buildExplorerHref({
 const MODULES = [
   {
     id: 'tess',
-    image: TESS_IMG,
+    image: TESS_MODULE_IMAGE,
     imageAlt: 'TESS 우주망원경 아티스트 컨셉 이미지',
-    imageCredit: 'NASA / MIT',
+    imageCredit: 'NASA',
     chip: 'NASA TESS · Space Telescope',
     title: 'TESS Transit Lab',
     description:
@@ -32,9 +30,9 @@ const MODULES = [
   },
   {
     id: 'kmtnet',
-    image: KMT_IMG,
-    imageAlt: 'KMTNet CTIO 관측소 망원경과 밤하늘',
-    imageCredit: 'KASI / KMTNet',
+    image: KMT_MODULE_IMAGE,
+    imageAlt: 'KMTNet 소개 배너 이미지',
+    imageCredit: 'KMTNet official website',
     chip: 'KASI KMTNet · Ground Network',
     title: 'KMTNet Microlensing Lab',
     description:
@@ -58,7 +56,13 @@ export function HomePage() {
       {/* ── 히어로 배너 ─────────────────────────────── */}
       <section className="home-hero">
         <div className="home-hero-bg">
-          <img src={HERO_BG} alt="" className="home-hero-bg-img" aria-hidden="true" />
+          <ImageWithFallback
+            src={HOME_HERO_BG}
+            fallbackSrc={ASTRO_FALLBACK_IMAGE}
+            alt=""
+            className="home-hero-bg-img"
+            aria-hidden="true"
+          />
           <div className="home-hero-bg-overlay" />
           <span className="home-hero-bg-credit">Image: ESA / Hubble — Ultra Deep Field</span>
         </div>
@@ -144,8 +148,9 @@ export function HomePage() {
           {MODULES.map((mod) => (
             <article key={mod.id} className="module-row-card">
               <div className="module-row-image-wrap">
-                <img
+                <ImageWithFallback
                   src={mod.image}
+                  fallbackSrc={ASTRO_FALLBACK_IMAGE}
                   alt={mod.imageAlt}
                   className="module-row-image"
                   loading="lazy"

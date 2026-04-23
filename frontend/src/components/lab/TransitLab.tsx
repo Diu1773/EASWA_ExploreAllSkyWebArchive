@@ -23,6 +23,8 @@ import {
   createTransitWorkflowDefinition,
   type PersistedTransitLabState,
   type TransitFitDataSource,
+  type TransitFitDisplayXAxis,
+  type TransitFitDisplayYAxis,
   type TransitStepAvailability,
   type TransitWorkflowStep,
 } from '../../workflows/transit/definition';
@@ -38,6 +40,7 @@ import {
   buildPhaseFoldedLightCurve,
   computeDefaultBjdWindow,
   estimatePhaseFoldReferenceT0,
+  transformLightCurveForDisplay,
 } from '../../workflows/transit/lightCurve';
 import { useTransitPreview } from '../../workflows/transit/hooks/useTransitPreview';
 import { useTransitPhotometry } from '../../workflows/transit/hooks/useTransitPhotometry';
@@ -71,6 +74,12 @@ const STEPS: Array<{ id: TransitStep; label: string; number: number }> = [
   { id: 'transitfit', label: 'Transit Fit', number: 5 },
   { id: 'record', label: 'Record Result', number: 6 },
 ];
+
+function defaultFitDisplayXAxis(
+  fitDataSource: TransitFitDataSource
+): TransitFitDisplayXAxis {
+  return fitDataSource === 'phase_fold' ? 'orbital_phase' : 'btjd';
+}
 
 type GuideQuestion =
   | { type: 'open'; id: string; text: string }
@@ -301,6 +310,7 @@ export function TransitLab({
   const [observationSelectionHydrated, setObservationSelectionHydrated] = useState(() =>
     useAppStore.persist.hasHydrated()
   );
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [recordTemplate, setRecordTemplate] = useState<RecordTemplate | null>(
     defaultTransitRecordTemplate
   );
@@ -339,6 +349,8 @@ export function TransitLab({
     foldT0Auto,
     fitLimbDarkening,
     fitDataSource,
+    fitDisplayXAxis,
+    fitDisplayYAxis,
     bjdWindowStart,
     bjdWindowEnd,
     fitWindowPhase,
@@ -454,6 +466,8 @@ export function TransitLab({
     foldT0Auto,
     fitLimbDarkening,
     fitDataSource,
+    fitDisplayXAxis,
+    fitDisplayYAxis,
     bjdWindowStart,
     bjdWindowEnd,
     fitWindowPhase,
@@ -646,6 +660,8 @@ export function TransitLab({
             aperture?: ApertureParams;
             fit_controls?: {
               fit_data_source?: TransitFitDataSource;
+              display_x_axis?: TransitFitDisplayXAxis;
+              display_y_axis?: TransitFitDisplayYAxis;
               bjd_start?: number | null;
               bjd_end?: number | null;
               fit_window_phase?: number;
@@ -703,6 +719,13 @@ export function TransitLab({
           fitSigmaClipIterations: payload.context?.fit_controls?.sigma_clip_iterations ?? 0,
           fitLimbDarkening: payload.context?.fit_controls?.fit_limb_darkening ?? false,
           fitDataSource: payload.context?.fit_controls?.fit_data_source ?? 'bjd_window',
+          fitDisplayXAxis:
+            payload.context?.fit_controls?.display_x_axis ??
+            defaultFitDisplayXAxis(
+              payload.context?.fit_controls?.fit_data_source ?? 'bjd_window'
+            ),
+          fitDisplayYAxis:
+            payload.context?.fit_controls?.display_y_axis ?? 'normalized_flux',
           foldPeriod:
             typeof payload.context?.transit_fit?.period === 'number' &&
               Number.isFinite(payload.context.transit_fit.period) &&
@@ -1161,6 +1184,8 @@ export function TransitLab({
           } : null,
           fit_controls: {
             fit_data_source: fitDataSource,
+            display_x_axis: fitDisplayXAxis,
+            display_y_axis: fitDisplayYAxis,
             bjd_start: resolvedBjdWindow?.start ?? null,
             bjd_end: resolvedBjdWindow?.end ?? null,
             fit_window_phase: requestedFitWindowPhase,
@@ -1202,6 +1227,8 @@ export function TransitLab({
       foldT0Auto: true,
       fitLimbDarkening: false,
       fitDataSource: 'bjd_window',
+      fitDisplayXAxis: 'btjd',
+      fitDisplayYAxis: 'normalized_flux',
       fitWindowPhase: 0.12,
       fitBaselineOrder: 0,
       fitSigmaClipSigma: 0.0,
@@ -1228,6 +1255,12 @@ export function TransitLab({
     const prevIndex = currentStepIndex - 1;
     if (prevIndex >= 0) setStep(stepOrder[prevIndex]);
   };
+  const currentStepMeta =
+    STEPS.find((item) => item.id === step) ?? STEPS[0];
+
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [step]);
 
   const cutoutArcmin =
     cutoutSizePx !== null ? ((cutoutSizePx * 21) / 60).toFixed(1) : null;
@@ -1311,7 +1344,7 @@ export function TransitLab({
             0.35,
           )
         : fitWindowPhase;
-  const fitDisplayLightCurve =
+  const fitDisplayBaseLightCurve =
     activeFitPreviewResult
       ? buildLightCurveFromFitResult(activeFitPreviewResult, fitDataSource)
       : fitDataSource === 'phase_fold' && fitReferencePeriod
@@ -1323,6 +1356,17 @@ export function TransitLab({
             requestedFitWindowPhase
           )
         : roiLightCurve;
+  const fitDisplayReferencePeriod = activeFitPreviewResult?.period ?? fitReferencePeriod;
+  const fitDisplayReferenceT0 = activeFitPreviewResult?.reference_t0 ?? phaseFoldReferenceT0;
+  const fitDisplayLightCurve =
+    fitDisplayBaseLightCurve
+      ? transformLightCurveForDisplay(fitDisplayBaseLightCurve, {
+          xAxisMode: fitDisplayXAxis,
+          yAxisMode: fitDisplayYAxis,
+          period: fitDisplayReferencePeriod,
+          t0: fitDisplayReferenceT0,
+        })
+      : null;
   const fitWindowPointCount = roiPoints.length;
   const canFitWithBjdWindow =
     hasResolvedBjdWindow && fitWindowPointCount >= 20;
@@ -1332,13 +1376,18 @@ export function TransitLab({
     Boolean(canFitWithBjdWindow && fitReferencePeriod);
   const fitSourceLabel =
     fitDataSource === 'phase_fold' ? 'Phase Fold' : 'BJD Window';
+  const fitDisplayXAxisLabel =
+    fitDisplayXAxis === 'orbital_phase' ? 'Orbital Phase' : 'BTJD';
+  const fitDisplayYAxisLabel =
+    fitDisplayYAxis === 'delta_mag' ? 'Delta mag' : 'Normalized Flux';
+  const canDisplayFitAsPhase = Boolean(fitDisplayReferencePeriod && fitDisplayReferencePeriod > 0);
   const fitPreviewOverlay =
     activeFitPreviewResult
-      ? buildFitOverlayCurve(activeFitPreviewResult, fitDataSource)
+      ? buildFitOverlayCurve(activeFitPreviewResult, fitDisplayXAxis, fitDisplayYAxis)
       : null;
   const fitPreviewResiduals =
     activeFitPreviewResult
-      ? buildFitResidualCurve(activeFitPreviewResult, fitDataSource)
+      ? buildFitResidualCurve(activeFitPreviewResult, fitDisplayXAxis, fitDisplayYAxis)
       : null;
   const fitResultModelFlux =
     fitResult && fitResult.data_flux.length === fitResult.residuals.length
@@ -1401,9 +1450,27 @@ export function TransitLab({
           <span className="transit-draft-bar-status">{draftStatusLabel}</span>
         </div>
       )}
-    <div className="lab-content transit-lab">
+    <div className={`lab-content transit-lab ${mobileSidebarOpen ? 'transit-mobile-sidebar-open' : ''}`}>
       {/* ===== SIDEBAR — changes per step ===== */}
       <div className="lab-sidebar">
+        <button
+          type="button"
+          className={`transit-mobile-sidebar-toggle ${mobileSidebarOpen ? 'open' : ''}`}
+          onClick={() => setMobileSidebarOpen((prev) => !prev)}
+          aria-expanded={mobileSidebarOpen}
+        >
+          <div className="transit-mobile-sidebar-copy">
+            <span className="transit-mobile-sidebar-kicker">
+              Step {currentStepMeta.number} controls
+            </span>
+            <strong>{currentStepMeta.label}</strong>
+          </div>
+          <span className="transit-mobile-sidebar-icon" aria-hidden="true">
+            {mobileSidebarOpen ? '−' : '+'}
+          </span>
+        </button>
+
+        <div className="transit-sidebar-scroll">
         {/* Sector list — always visible */}
         <div className="thumbnail-strip">
           <h4>Selected Sectors ({selectedObservations.length})</h4>
@@ -1440,8 +1507,9 @@ export function TransitLab({
             <div className="transit-controls-card">
               <h4>Stars</h4>
               <p className="hint">
-                Click a star below to adjust its aperture. Click the cutout image
-                to add comparison stars (up to {MAX_COMPARISON_STARS}).
+                Tap or click a star below to adjust its aperture. Tap the cutout image
+                to add comparison stars, or drag an existing aperture to reposition it
+                (up to {MAX_COMPARISON_STARS}).
               </p>
               <div className="transit-star-list">
                 {/* Target star */}
@@ -1499,7 +1567,7 @@ export function TransitLab({
 
                 {comparisonStars.length === 0 && (
                   <div className="transit-star-row empty">
-                    Click cutout to add comparisons
+                    Tap the cutout to add comparison stars
                   </div>
                 )}
               </div>
@@ -1911,7 +1979,11 @@ export function TransitLab({
               <button
                 className={`btn-sm ${fitDataSource === 'bjd_window' ? 'active' : ''}`}
                 onClick={() => {
-                  patch({ fitDataSource: 'bjd_window', fitResult: null });
+                  patch({
+                    fitDataSource: 'bjd_window',
+                    fitDisplayXAxis: defaultFitDisplayXAxis('bjd_window'),
+                    fitResult: null,
+                  });
                 }}
                 type="button"
               >
@@ -1922,6 +1994,7 @@ export function TransitLab({
                 onClick={() => {
                   patch({
                     fitDataSource: 'phase_fold',
+                    fitDisplayXAxis: defaultFitDisplayXAxis('phase_fold'),
                     fitResult: null,
                   });
                 }}
@@ -1931,10 +2004,63 @@ export function TransitLab({
                 Phase Fold
               </button>
             </div>
+            <p className="hint" style={{ marginBottom: 8 }}>
+              Plot axis remapping only changes how Step 5 is displayed. The fit still uses the
+              same ROI samples and current fit source.
+            </p>
+            <div className="transit-toggle-row" style={{ marginBottom: 8 }}>
+              <button
+                className={`btn-sm ${fitDisplayXAxis === 'btjd' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayXAxis: 'btjd' });
+                }}
+                type="button"
+              >
+                X: BTJD
+              </button>
+              <button
+                className={`btn-sm ${fitDisplayXAxis === 'orbital_phase' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayXAxis: 'orbital_phase' });
+                }}
+                type="button"
+                disabled={!canDisplayFitAsPhase}
+              >
+                X: Orbital Phase
+              </button>
+            </div>
+            <div className="transit-toggle-row" style={{ marginBottom: 12 }}>
+              <button
+                className={`btn-sm ${fitDisplayYAxis === 'normalized_flux' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayYAxis: 'normalized_flux' });
+                }}
+                type="button"
+              >
+                Y: Flux
+              </button>
+              <button
+                className={`btn-sm ${fitDisplayYAxis === 'delta_mag' ? 'active' : ''}`}
+                onClick={() => {
+                  patch({ fitDisplayYAxis: 'delta_mag' });
+                }}
+                type="button"
+              >
+                Y: Delta mag
+              </button>
+            </div>
             <div className="transit-config-summary" style={{ marginBottom: 12 }}>
               <div className="transit-config-row">
                 <span>Fit Source</span>
                 <span>{fitSourceLabel}</span>
+              </div>
+              <div className="transit-config-row">
+                <span>Display X</span>
+                <span>{fitDisplayXAxisLabel}</span>
+              </div>
+              <div className="transit-config-row">
+                <span>Display Y</span>
+                <span>{fitDisplayYAxisLabel}</span>
               </div>
               {fitDataSource === 'bjd_window' && resolvedBjdWindow && (
                 <div className="transit-config-row">
@@ -2045,8 +2171,8 @@ export function TransitLab({
               </p>
             )}
             <div className="transit-callout" style={{ marginTop: 12 }}>
-              Step 5는 항상 Step 4에서 고른 같은 ROI 점열만 씁니다. 바뀌는 건 표시와
-              fit 좌표계뿐이고, 소스 cadence 자체는 바뀌지 않습니다.
+              Step 5는 항상 Step 4에서 고른 같은 ROI 점열만 씁니다. fit에 들어가는 cadence는
+              그대로 두고, 화면에서만 X/Y 축 표현을 다시 매핑할 수 있습니다.
             </div>
             {fitDataSource === 'phase_fold' && hasResolvedBjdWindow && (
               <div className="transit-callout" style={{ marginTop: 12 }}>
@@ -2170,6 +2296,7 @@ export function TransitLab({
             )}
           </div>
         )}
+        </div>
       </div>
 
       {/* ===== MAIN PANEL ===== */}
@@ -2250,7 +2377,8 @@ export function TransitLab({
               <div>
                 <h3>1. Select Target & Comparison Stars</h3>
                 <p className="hint">
-                  목표별(T, 주황)이 중앙에 표시됩니다. 주변 밝은 별을 클릭해 비교별(파랑)을 추가하세요.
+                  목표별(T, 주황)이 중앙에 표시됩니다. 주변 밝은 별을 눌러 비교별(파랑)을 추가하고,
+                  이미 선택한 별은 드래그해서 위치를 미세 조정할 수 있습니다.
                 </p>
               </div>
               {activeObservation && (
@@ -2780,10 +2908,9 @@ export function TransitLab({
               <StepGuide step="transitfit" onAnswersChange={handleGuideAnswers} />
 
               <div className="transit-callout">
-                Black points are the exact normalized samples used in the fit. Red is the
-                best-fit transit model on that same axis, so Step 5 now shows one ROI with
-                two view modes instead of mixing Step 4 light-curve selection and Step 5
-                fit coordinates.
+                Black points are the exact samples used in the fit. Red is the best-fit
+                transit model for those same samples, and the X/Y axes can be remapped in
+                the sidebar without rerunning the fit.
               </div>
 
               {fitDataSource === 'phase_fold' && !fitReferencePeriod && (

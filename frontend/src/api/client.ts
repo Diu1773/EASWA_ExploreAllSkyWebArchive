@@ -35,6 +35,7 @@ import type {
   MicrolensingPreviewBundleResponse,
   MicrolensingPreviewResponse,
 } from '../types/microlensing';
+import { consumeNdjsonStream } from './ndjson';
 
 const BASE = '/api';
 
@@ -188,35 +189,11 @@ export async function runTransitPhotometryStreaming(
   if (!res.ok) {
     throw new Error(await buildApiErrorMessage(res, 'POST /transit/photometry-stream failed'));
   }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let result: TransitPhotometryResponse | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop()!;
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const event = JSON.parse(line);
-      if (event.type === 'progress') {
-        onProgress(event as TransitPhotometryProgressEvent);
-      } else if (event.type === 'result') {
-        result = event.data as TransitPhotometryResponse;
-      } else if (event.type === 'error') {
-        throw new Error(event.message);
-      }
-    }
-  }
-
-  if (!result) throw new Error('No result received from photometry stream');
-  return result;
+  return consumeNdjsonStream(
+    res,
+    onProgress,
+    'No result received from photometry stream'
+  );
 }
 
 export async function fitTransitModel(
@@ -248,35 +225,11 @@ export async function fitTransitModelStreaming(
   if (!res.ok) {
     throw new Error(await buildApiErrorMessage(res, 'POST /transit/fit-stream failed'));
   }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let result: TransitFitResponse | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop()!;
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const event = JSON.parse(line);
-      if (event.type === 'progress') {
-        onProgress(event as FitProgressEvent);
-      } else if (event.type === 'result') {
-        result = event.data as TransitFitResponse;
-      } else if (event.type === 'error') {
-        throw new Error(event.message);
-      }
-    }
-  }
-
-  if (!result) throw new Error('No result received from fit stream');
-  return result;
+  return consumeNdjsonStream(
+    res,
+    onProgress,
+    'No result received from fit stream'
+  );
 }
 
 export async function createTransitPreviewJob(

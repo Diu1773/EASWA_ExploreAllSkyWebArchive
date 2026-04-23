@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import PlotlyModule from 'plotly.js-dist-min';
 import type { LightCurveResponse } from '../../types/photometry';
 
@@ -84,6 +84,30 @@ function computeResidualRange(residuals: number[], fallbackErrors: number[]): nu
   return Math.max(maxResidual * 1.2, maxError * 2.5, 0.0015);
 }
 
+function isPhaseAxisLabel(label: string): boolean {
+  return label.toLowerCase().includes('phase');
+}
+
+function isMagnitudeAxisLabel(label: string): boolean {
+  return label.toLowerCase().includes('mag');
+}
+
+function formatResidualStdLabel(residualStd: number | null, yLabel: string): string {
+  if (residualStd === null) return 'STD = n/a';
+  if (isMagnitudeAxisLabel(yLabel)) {
+    return `STD = ${(residualStd * 1000).toFixed(2)} mmag`;
+  }
+  return `STD = ${(residualStd * 100).toFixed(2)}%`;
+}
+
+function getResidualAxisLabel(yLabel: string): string {
+  return isMagnitudeAxisLabel(yLabel) ? 'Residuals (mag)' : 'Residuals';
+}
+
+function getPrimarySeriesName(yLabel: string): string {
+  return isMagnitudeAxisLabel(yLabel) ? 'Delta mag' : 'F_target / F_comp';
+}
+
 export function LightCurvePlot({
   data,
   targetName,
@@ -99,6 +123,7 @@ export function LightCurvePlot({
 }: LightCurvePlotProps) {
   const plotRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<string | null>(null);
+  const [plotWidth, setPlotWidth] = useState(0);
   const shouldFold = Boolean(foldPeriod && foldPeriod > 0);
   const plotData = useMemo(() => {
     if (!shouldFold) return data;
@@ -115,6 +140,18 @@ export function LightCurvePlot({
   }, [data, shouldFold, foldPeriod, foldT0]);
 
   useEffect(() => {
+    if (!plotRef.current) return;
+
+    const node = plotRef.current;
+    const updateWidth = () => setPlotWidth(node.clientWidth);
+
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     if (plotData.points.length === 0 || !plotRef.current) return;
 
     let cancelled = false;
@@ -126,8 +163,11 @@ export function LightCurvePlot({
 
       if (cancelled || !plotRef.current) return;
 
-      const isFolded = plotData.x_label === 'Phase';
-      const isMagnitudeAxis = plotData.y_label === 'Magnitude';
+      const containerWidth = plotWidth || plotRef.current.clientWidth || 0;
+      const isCompactPlot = containerWidth > 0 && containerWidth < 560;
+      const isVeryCompactPlot = containerWidth > 0 && containerWidth < 400;
+      const isFolded = isPhaseAxisLabel(plotData.x_label);
+      const isMagnitudeAxis = isMagnitudeAxisLabel(plotData.y_label);
       const shouldRenderDenseSeries = plotData.points.length > 2000;
       const markerSize = shouldRenderDenseSeries ? 4.8 : 6.2;
       const xValues = isFolded
@@ -169,7 +209,7 @@ export function LightCurvePlot({
             opacity: fitPreviewMode ? 0.9 : shouldRenderDenseSeries ? 0.88 : 0.94,
           },
           line: { color: '#111111', width: 0 },
-          name: 'F_target / F_comp',
+          name: getPrimarySeriesName(plotData.y_label),
           xaxis: 'x',
           yaxis: 'y',
         },
@@ -252,7 +292,7 @@ export function LightCurvePlot({
                 text: '<b>EASWA</b>',
                 font: {
                   family: 'IBM Plex Sans, sans-serif',
-                  size: 14,
+                  size: isCompactPlot ? 12 : 14,
                   color: '#ff6600',
                 },
               },
@@ -264,13 +304,10 @@ export function LightCurvePlot({
                 xanchor: 'left',
                 yanchor: 'bottom',
                 showarrow: false,
-                text:
-                  residualStd !== null
-                    ? `STD = ${(residualStd * 100).toFixed(2)}%`
-                    : 'STD = n/a',
+                text: formatResidualStdLabel(residualStd, plotData.y_label),
                 font: {
                   family: 'IBM Plex Sans, sans-serif',
-                  size: 12,
+                  size: isCompactPlot ? 10 : 12,
                   color: '#2f2f2f',
                 },
               }
@@ -289,7 +326,7 @@ export function LightCurvePlot({
                 text: `Analyst: ${analystLabel}`,
                 font: {
                   family: 'IBM Plex Sans, sans-serif',
-                  size: 12,
+                  size: isCompactPlot ? 10 : 12,
                   color: '#2f2f2f',
                 },
               });
@@ -303,7 +340,7 @@ export function LightCurvePlot({
                 xanchor: 'center',
                 yanchor: 'top',
                 font: {
-                  size: 28,
+                  size: isCompactPlot ? 18 : 28,
                   color: '#111111',
                   family: 'IBM Plex Sans, sans-serif',
                 },
@@ -342,7 +379,10 @@ export function LightCurvePlot({
               },
               yaxis2: {
                 domain: [0, 0.18],
-                title: { text: 'Residuals', font: { color: '#333', size: 12 } },
+                title: {
+                  text: getResidualAxisLabel(plotData.y_label),
+                  font: { color: '#333', size: isCompactPlot ? 11 : 12 },
+                },
                 range: [-residualRange, residualRange],
                 gridcolor: 'rgba(0,0,0,0.08)',
                 zeroline: true,
@@ -353,21 +393,28 @@ export function LightCurvePlot({
               },
               plot_bgcolor: '#ffffff',
               paper_bgcolor: '#ffffff',
-              font: { family: 'IBM Plex Mono, monospace', color: '#333', size: 11 },
-              margin: { t: 115, r: 36, b: 62, l: 78 },
-              height: 620,
+              font: {
+                family: 'IBM Plex Mono, monospace',
+                color: '#333',
+                size: isCompactPlot ? 10 : 11,
+              },
+              margin: isCompactPlot
+                ? { t: 88, r: 18, b: 58, l: 54 }
+                : { t: 115, r: 36, b: 62, l: 78 },
+              height: isCompactPlot ? 500 : 620,
               showlegend: true,
               legend: {
-                x: 1,
-                y: 0.95,
-                xanchor: 'right',
+                x: isCompactPlot ? 0.5 : 1,
+                y: isCompactPlot ? -0.12 : 0.95,
+                xanchor: isCompactPlot ? 'center' : 'right',
                 yanchor: 'top',
+                orientation: isCompactPlot ? 'h' : 'v',
                 bgcolor: 'rgba(255,255,255,0.82)',
                 bordercolor: 'rgba(0,0,0,0.08)',
                 borderwidth: 1,
                 font: {
                   family: 'IBM Plex Sans, sans-serif',
-                  size: 11,
+                  size: isCompactPlot ? 10 : 11,
                   color: '#222',
                 },
               },
@@ -378,8 +425,8 @@ export function LightCurvePlot({
                   yref: 'paper',
                   x: 0.002,
                   y: 1.185,
-                  sizex: 0.065,
-                  sizey: 0.12,
+                  sizex: isCompactPlot ? 0.09 : 0.065,
+                  sizey: isCompactPlot ? 0.16 : 0.12,
                   xanchor: 'left',
                   yanchor: 'top',
                   layer: 'above',
@@ -394,7 +441,7 @@ export function LightCurvePlot({
               text: [plotTitle, isFolded ? 'Phase-Folded Light Curve' : 'Differential Light Curve']
                 .join(' \u2014 '),
               font: {
-                size: 14,
+                size: isCompactPlot ? 12 : 14,
                 color: '#1a1a1a',
                 family: 'IBM Plex Sans, sans-serif',
               },
@@ -420,9 +467,33 @@ export function LightCurvePlot({
             },
             plot_bgcolor: '#ffffff',
             paper_bgcolor: '#ffffff',
-            font: { family: 'IBM Plex Mono, monospace', color: '#333', size: 11 },
-            margin: { t: 50, r: 30, b: 55, l: 65 },
+            font: {
+              family: 'IBM Plex Mono, monospace',
+              color: '#333',
+              size: isCompactPlot ? 10 : 11,
+            },
+            margin: isCompactPlot
+              ? { t: 44, r: 16, b: 48, l: 48 }
+              : { t: 50, r: 30, b: 55, l: 65 },
+            height: isCompactPlot ? 320 : undefined,
             showlegend: hasOverlayCurve,
+            legend: hasOverlayCurve
+              ? {
+                  orientation: isCompactPlot ? 'h' : 'v',
+                  x: isCompactPlot ? 0.5 : 1,
+                  xanchor: isCompactPlot ? 'center' : 'right',
+                  y: isCompactPlot ? -0.16 : 1,
+                  yanchor: 'top',
+                  bgcolor: 'rgba(255,255,255,0.82)',
+                  bordercolor: 'rgba(0,0,0,0.08)',
+                  borderwidth: 1,
+                  font: {
+                    family: 'IBM Plex Sans, sans-serif',
+                    size: isCompactPlot ? 10 : 11,
+                    color: '#222',
+                  },
+                }
+              : undefined,
             shapes: hasHighlight
               ? [
                   {
@@ -449,7 +520,7 @@ export function LightCurvePlot({
         layout,
         {
           responsive: true,
-          displayModeBar: true,
+          displayModeBar: !isVeryCompactPlot,
           modeBarButtonsToRemove: ['lasso2d', 'select2d'],
         }
       );
@@ -488,11 +559,7 @@ export function LightCurvePlot({
     return () => {
       cancelled = true;
       errorRef.current = null;
-
-      if (plotly && plotRef.current) {
-        (plotRef.current as any).removeAllListeners?.('plotly_selected');
-        plotly.purge(plotRef.current);
-      }
+      (plotRef.current as any)?.removeAllListeners?.('plotly_selected');
     };
   }, [
     plotData,
@@ -504,11 +571,21 @@ export function LightCurvePlot({
     highlightRange,
     enableRangeSelection,
     onSelectRange,
+    plotWidth,
   ]);
+
+  useEffect(() => {
+    return () => {
+      if (plotly && plotRef.current) {
+        (plotRef.current as any).removeAllListeners?.('plotly_selected');
+        plotly.purge(plotRef.current);
+      }
+    };
+  }, []);
 
   if (plotData.points.length === 0) return null;
 
-  const isFolded = plotData.x_label === 'Phase';
+  const isFolded = isPhaseAxisLabel(plotData.x_label);
 
   return (
     <div className="lightcurve-plot">

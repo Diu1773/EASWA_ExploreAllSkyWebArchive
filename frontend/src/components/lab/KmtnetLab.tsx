@@ -9,7 +9,9 @@ import {
   fitMicrolensingModel,
   submitRecordTemplate,
 } from '../../api/client';
+import { ImageWithFallback } from '../layout/ImageWithFallback';
 import { defaultKmtnetRecordTemplate } from '../../data/kmtnetRecordTemplate';
+import { ASTRO_FALLBACK_IMAGE, KMT_SITE_IMAGES } from '../../data/imageSources';
 import { useWorkflowController } from '../../hooks/useWorkflowController';
 import { useAuthStore } from '../../stores/useAuthStore';
 import type {
@@ -42,12 +44,7 @@ const SITE_LABELS: Record<string, string> = {
   saao: 'SAAO (남아프리카)',
   sso:  'SSO (호주)',
 };
-// CTIO: Wikimedia Commons 공개 이미지 / SAAO·SSO: public/images/ 에 파일 추가
-const SITE_PHOTOS: Record<string, string | null> = {
-  ctio: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/KMTNet_CTIO_small.jpg/800px-KMTNet_CTIO_small.jpg',
-  saao: '/images/kmtnet-saao.jpg',
-  sso:  '/images/kmtnet-sso.jpg',
-};
+const SITE_PHOTOS: Record<string, string | null> = KMT_SITE_IMAGES;
 const ALL_SITES = ['ctio', 'saao', 'sso'];
 type ExtractionMode = 'quick' | 'detailed';
 
@@ -332,7 +329,7 @@ function RawFieldCard({
         <article className="ml-preview-card">
           <div className="ml-preview-card-head">
             <strong>Raw Frame</strong>
-            <span>{siteLabel} 단일 frame의 crowded field</span>
+            <span>{siteLabel}의 같은 sky stamp · current epoch 원본</span>
           </div>
           <div className="ml-preview-stage">
             <img src={preview.raw_image_data_url} alt="KMT raw field" className="ml-preview-image" />
@@ -342,7 +339,8 @@ function RawFieldCard({
         <div className="ml-field-note-card">
           <h4>왜 그냥 밝기를 재면 안 되나?</h4>
           <p>
-            은하벌지 방향은 별이 매우 빽빽해서 한 위치의 광도에 여러 별이 섞입니다.
+            여기서 보는 것은 전체 4 deg² field가 아니라, 선택한 타깃 좌표 주변의 작은 <code>stamp</code> 입니다.
+            은하벌지 방향은 별이 매우 빽빽해서 이 작은 영역 안에서도 여러 별의 광도가 섞입니다.
             그래서 <code>difference imaging</code> 전에는 “어느 별이 실제로 변한 것인지”를 분리하기 어렵습니다.
           </p>
           <dl className="ml-site-dl">
@@ -384,7 +382,7 @@ function AlignmentPanel({
       <div className="ml-preview-head">
         <div>
           <span className="ml-preview-kicker">Frame Registration</span>
-          <h4>Raw / Aligned 비교</h4>
+          <h4>같은 stamp의 정렬 전 / 후 비교</h4>
         </div>
         <div className="ml-preview-stats">
           <span>Δx {preview.registration_dx_px >= 0 ? '+' : ''}{preview.registration_dx_px.toFixed(2)} px</span>
@@ -420,7 +418,7 @@ function AlignmentPanel({
         <article className="ml-preview-card">
           <div className="ml-preview-card-head">
             <strong>Raw Frame</strong>
-            <span>WCS cutout only</span>
+            <span>현재 epoch의 같은 sky stamp</span>
           </div>
           <div className="ml-preview-stage">
             <img src={preview.raw_image_data_url} alt="Raw frame" className="ml-preview-image" />
@@ -430,7 +428,7 @@ function AlignmentPanel({
         <article className="ml-preview-card">
           <div className="ml-preview-card-head">
             <strong>Aligned Frame</strong>
-            <span>reference에 맞춰 픽셀 이동</span>
+            <span>같은 stamp를 reference에 맞춰 이동</span>
           </div>
           <div className="ml-preview-stage">
             <img src={preview.aligned_image_data_url} alt="Aligned frame" className="ml-preview-image" />
@@ -445,12 +443,13 @@ function AlignmentPanel({
 
       <div className="ml-preview-note">
         <span>
-          현재 프레임은 기준 프레임에 맞춰 <strong>x {preview.registration_dx_px >= 0 ? '+' : ''}{preview.registration_dx_px.toFixed(2)} px</strong>,
+          현재 epoch stamp는 기준 stamp에 맞춰 <strong>x {preview.registration_dx_px >= 0 ? '+' : ''}{preview.registration_dx_px.toFixed(2)} px</strong>,
           <strong> y {preview.registration_dy_px >= 0 ? '+' : ''}{preview.registration_dy_px.toFixed(2)} px</strong> 만큼 이동했습니다.
           {' '}
           정렬 점수는 <strong>{preview.registration_quality_score.toFixed(4)}</strong> 입니다.
         </span>
         <span>
+          즉, 프레임 전체를 보여주는 것이 아니라 <strong>타깃 주변의 같은 sky stamp를 epoch별로 맞춰보는 단계</strong>입니다.
           정렬이 맞을수록 별상이 reference와 더 잘 겹치고, 다음 단계 difference image에서 잔차가 더 깔끔하게 남습니다.
           {preview.registration_warning ? ` ${preview.registration_warning}` : ''}
           {frameLoading ? ' 새 프레임을 불러오는 중입니다…' : ''}
@@ -624,7 +623,6 @@ export function KmtnetLab({
   const [mergedLoading, setMergedLoading] = useState(false);
   const [previewBundleLoading, setPreviewBundleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sitePhotoError, setSitePhotoError] = useState(false);
   const recordTemplateRequestedRef = useRef(false);
   const loadedSeedRecordIdRef = useRef<number | null>(null);
   const previewCacheRef = useRef<Map<string, MicrolensingPreviewResponse>>(new Map());
@@ -1045,12 +1043,12 @@ export function KmtnetLab({
 
           <div className="ml-site-photo-row">
             <div className="ml-site-photo-wrap">
-              {sitePhoto && !sitePhotoError ? (
-                <img
+              {sitePhoto ? (
+                <ImageWithFallback
                   src={sitePhoto}
+                  fallbackSrc={ASTRO_FALLBACK_IMAGE}
                   alt={`KMTNet ${siteId.toUpperCase()} 관측소`}
                   className="ml-site-photo"
-                  onError={() => setSitePhotoError(true)}
                 />
               ) : (
                 <div className="ml-site-photo-placeholder">

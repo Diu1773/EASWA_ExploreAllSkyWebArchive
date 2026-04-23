@@ -42,8 +42,8 @@ _SITE_OBSERVATORY = {
     "sso": "SSO",
 }
 
-_PREVIEW_IMAGE_SIZE_PX = 320
-_DEFAULT_CUTOUT_SIZE_PX = 64
+_PREVIEW_IMAGE_SIZE_PX = 384
+_DEFAULT_CUTOUT_SIZE_PX = 96
 _MIN_CUTOUT_SIZE_PX = 48
 _MAX_CUTOUT_SIZE_PX = 96
 _LIGHTCURVE_QUICK_SAMPLE_LIMIT_PER_SITE = 4
@@ -56,6 +56,8 @@ _MERGED_LIGHTCURVE_WORKERS = 3
 _DEFAULT_EXTRACTION_MODE = "quick"
 _PREVIEW_BUNDLE_LIMIT = 10
 _PREVIEW_BUNDLE_WORKERS = 4
+_CUTOUT_MIN_FINITE_FRACTION = 0.82
+_CUTOUT_TARGET_MARGIN_PX = 6.0
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +283,18 @@ def _extract_site_point(
     baseline_mag: float,
 ) -> MicrolensingPoint | None:
     frame = _load_cutout_frame(target, row, _DEFAULT_CUTOUT_SIZE_PX)
-    aligned_frame = _register_frame_to_reference(frame, reference_frame)
+    usable_frame, coverage_warning = _frame_has_usable_coverage(frame)
     observation_id = str(row["id"])
+    if not usable_frame:
+        return _ExtractionPointResult(
+            point=None,
+            observation_id=observation_id,
+            warning=(
+                f"{frame.site.upper()} frame {observation_id} was excluded: "
+                f"{coverage_warning or 'insufficient cutout coverage.'}"
+            ),
+        )
+    aligned_frame = _register_frame_to_reference(frame, reference_frame)
     if aligned_frame.hit_limit:
         return _ExtractionPointResult(
             point=None,
@@ -376,8 +388,13 @@ def _get_preview_cached(
         raise ValueError(f"No KMTNet observations available for {target_id} at {site_key}.")
 
     resolved_size_px = _normalize_cutout_size(size_px)
-    resolved_frame_index = max(0, min(len(rows) - 1, int(frame_index)))
-    selected_row = rows[resolved_frame_index]
+    requested_frame_index = max(0, min(len(rows) - 1, int(frame_index)))
+    resolved_frame_index, selected_row, selected_frame, coverage_warning = _resolve_preview_frame(
+        target_id,
+        site_key,
+        requested_frame_index,
+        resolved_size_px,
+    )
     reference_row = _resolve_reference_row(
         target_id,
         site_key,
@@ -389,7 +406,6 @@ def _get_preview_cached(
         0,
     )
 
-    selected_frame = _load_cutout_frame(target, selected_row, resolved_size_px)
     reference_frame = _load_cutout_frame(target, reference_row, resolved_size_px)
     aligned_frame = _register_frame_to_reference(selected_frame, reference_frame)
     difference_frame = aligned_frame.bg_subtracted - reference_frame.bg_subtracted
@@ -459,10 +475,13 @@ def _get_preview_cached(
         registration_dy_px=round(float(aligned_frame.shift_y), 2),
         registration_quality_score=round(float(aligned_frame.quality_score), 6),
         registration_hit_limit=aligned_frame.hit_limit,
-        registration_warning=(
-            "Registration shift hit the search limit; inspect this frame carefully."
-            if aligned_frame.hit_limit
-            else None
+        registration_warning=_compose_preview_warning(
+            coverage_warning=coverage_warning,
+            registration_warning=(
+                "Registration shift hit the search limit; inspect this frame carefully."
+                if aligned_frame.hit_limit
+                else None
+            ),
         ),
         frame_metadata=MicrolensingPreviewFrameMetadata(
             frame_index=resolved_frame_index,
@@ -513,7 +532,7 @@ def _get_preview_bundle_cached(
         reference_frame_index=reference_frame_index,
     )
 
-    previews: list[MicrolensingPreviewResponse] = []
+    previews_by_index: dict[int, MicrolensingPreviewResponse] = {}
     with ThreadPoolExecutor(max_workers=min(len(bundle_frame_indices), _PREVIEW_BUNDLE_WORKERS)) as executor:
         futures = {
             executor.submit(
@@ -529,7 +548,8 @@ def _get_preview_bundle_cached(
         for future in as_completed(futures):
             frame_index = futures[future]
             try:
-                previews.append(future.result())
+                preview = future.result()
+                previews_by_index.setdefault(preview.frame_index, preview)
             except Exception as error:
                 logger.warning(
                     "Skipping KMT preview bundle frame %s for %s/%s: %s",
@@ -539,7 +559,7 @@ def _get_preview_bundle_cached(
                     error,
                 )
 
-    previews.sort(key=lambda preview: preview.frame_index)
+    previews = sorted(previews_by_index.values(), key=lambda preview: preview.frame_index)
     if not previews:
         raise ValueError(f"No KMTNet preview bundle could be created for {target_id}/{site_key}.")
 
@@ -656,6 +676,9 @@ def _resolve_reference_observation_id(target_id: str, site_key: str, size_px: in
                     site_key,
                     error,
                 )
+                continue
+            usable_frame, _ = _frame_has_usable_coverage(frame)
+            if not usable_frame:
                 continue
             flux = _measure_net_flux(frame.bg_subtracted, frame.target_x, frame.target_y)
             if not np.isfinite(flux):
@@ -786,6 +809,98 @@ def _load_cutout_frame_cached(
         target_x=target_x,
         target_y=target_y,
     )
+
+
+def _frame_has_usable_coverage(frame: _CutoutFrame) -> tuple[bool, str | None]:
+    image = np.asarray(frame.raw_data, dtype=np.float32)
+    finite_mask = np.isfinite(image)
+    finite_fraction = float(np.mean(finite_mask))
+    if finite_fraction < _CUTOUT_MIN_FINITE_FRACTION:
+        return False, (
+            f"cutout coverage too low ({finite_fraction * 100:.0f}% finite pixels); "
+            "target is likely near the detector edge."
+        )
+
+    height, width = image.shape
+    target_margin = min(
+        frame.target_x,
+        frame.target_y,
+        (width - 1) - frame.target_x,
+        (height - 1) - frame.target_y,
+    )
+    if target_margin < _CUTOUT_TARGET_MARGIN_PX:
+        return False, (
+            f"target lies too close to the cutout edge (margin {target_margin:.1f} px)."
+        )
+
+    center_radius = 5
+    x0 = max(int(np.floor(frame.target_x)) - center_radius, 0)
+    x1 = min(int(np.ceil(frame.target_x)) + center_radius + 1, width)
+    y0 = max(int(np.floor(frame.target_y)) - center_radius, 0)
+    y1 = min(int(np.ceil(frame.target_y)) + center_radius + 1, height)
+    center_mask = finite_mask[y0:y1, x0:x1]
+    if center_mask.size == 0 or float(np.mean(center_mask)) < 0.95:
+        return False, "central target region is only partially covered."
+    return True, None
+
+
+def _resolve_preview_frame(
+    target_id: str,
+    site_key: str,
+    requested_frame_index: int,
+    size_px: int,
+) -> tuple[int, dict[str, Any], _CutoutFrame, str | None]:
+    rows = _list_rows(target_id, site_key)
+    candidate_offsets = [0]
+    for offset in range(1, len(rows)):
+        candidate_offsets.extend([-offset, offset])
+
+    first_row = rows[requested_frame_index]
+    first_frame: _CutoutFrame | None = None
+    first_warning: str | None = None
+    for offset in candidate_offsets:
+        candidate_index = requested_frame_index + offset
+        if candidate_index < 0 or candidate_index >= len(rows):
+            continue
+        candidate_row = rows[candidate_index]
+        candidate_frame = _load_cutout_frame_cached(
+            target_id,
+            site_key,
+            str(candidate_row["id"]),
+            size_px,
+        )
+        if offset == 0:
+            first_frame = candidate_frame
+        usable_frame, warning = _frame_has_usable_coverage(candidate_frame)
+        if usable_frame:
+            if candidate_index == requested_frame_index:
+                return candidate_index, candidate_row, candidate_frame, None
+            return (
+                candidate_index,
+                candidate_row,
+                candidate_frame,
+                (
+                    f"Requested frame #{requested_frame_index + 1} had poor cutout coverage; "
+                    f"showing nearest valid frame #{candidate_index + 1} instead."
+                ),
+            )
+        if offset == 0:
+            first_warning = warning
+
+    if first_frame is None:
+        first_frame = _load_cutout_frame_cached(target_id, site_key, str(first_row["id"]), size_px)
+    return requested_frame_index, first_row, first_frame, first_warning
+
+
+def _compose_preview_warning(
+    *,
+    coverage_warning: str | None,
+    registration_warning: str | None,
+) -> str | None:
+    messages = [message for message in [coverage_warning, registration_warning] if message]
+    if not messages:
+        return None
+    return " ".join(dict.fromkeys(messages))
 
 
 def _estimate_background(image: np.ndarray) -> float:
@@ -1029,7 +1144,7 @@ def _encode_difference_image(image: np.ndarray) -> str:
 def _encode_rgb_image(rgb: np.ndarray) -> str:
     preview = Image.fromarray(rgb, mode="RGB").resize(
         (_PREVIEW_IMAGE_SIZE_PX, _PREVIEW_IMAGE_SIZE_PX),
-        resample=Image.Resampling.NEAREST,
+        resample=Image.Resampling.BICUBIC,
     )
     buffer = io.BytesIO()
     preview.save(buffer, format="PNG")

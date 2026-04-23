@@ -45,7 +45,20 @@ export function TopicSidebar() {
   useEffect(() => {
     if (settingsOpen && gearButtonRef.current) {
       const rect = gearButtonRef.current.getBoundingClientRect();
-      setPanelPos({ top: rect.bottom + 8, left: rect.left - 150 });
+      const panelWidth = 240;
+      const panelHeight = 260;
+      const viewportMargin = 10;
+      const preferredLeft = rect.right - panelWidth;
+      const preferredTop = rect.bottom + 8;
+      const clampedLeft = Math.min(
+        Math.max(viewportMargin, preferredLeft),
+        Math.max(viewportMargin, window.innerWidth - panelWidth - viewportMargin),
+      );
+      const clampedTop =
+        preferredTop + panelHeight + viewportMargin <= window.innerHeight
+          ? preferredTop
+          : Math.max(viewportMargin, rect.top - panelHeight - 8);
+      setPanelPos({ top: clampedTop, left: clampedLeft });
     }
   }, [settingsOpen]);
 

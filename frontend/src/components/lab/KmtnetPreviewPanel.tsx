@@ -55,7 +55,7 @@ export function KmtnetPreviewPanel({
       <div className="ml-preview-head">
         <div>
           <span className="ml-preview-kicker">Difference Imaging</span>
-          <h4>Raw / Reference / Difference</h4>
+          <h4>같은 하늘 좌표 stamp의 정렬 / 차분</h4>
         </div>
         <div className="ml-preview-stats">
           <span>HJD {frameMetadata.hjd.toFixed(4)}</span>
@@ -118,22 +118,22 @@ export function KmtnetPreviewPanel({
 
       <div className="ml-preview-grid">
         <PreviewCard
-          title="Aligned Frame"
-          caption={`reference 대비 Δx ${preview.registration_dx_px >= 0 ? '+' : ''}${preview.registration_dx_px.toFixed(2)} px · Δy ${preview.registration_dy_px >= 0 ? '+' : ''}${preview.registration_dy_px.toFixed(2)} px`}
+          title="Current Epoch (Aligned)"
+          caption={`같은 sky stamp를 reference에 맞춰 정렬 · Δx ${preview.registration_dx_px >= 0 ? '+' : ''}${preview.registration_dx_px.toFixed(2)} px · Δy ${preview.registration_dy_px >= 0 ? '+' : ''}${preview.registration_dy_px.toFixed(2)} px`}
           imageUrl={preview.aligned_image_data_url}
           preview={preview}
           markerPosition={preview.aligned_target_position}
         />
         <PreviewCard
           title="Reference"
-          caption={`기준 프레임 #${preview.reference_frame_index + 1}`}
+          caption={`비교 기준 epoch · frame #${preview.reference_frame_index + 1}`}
           imageUrl={preview.reference_image_data_url}
           preview={preview}
           markerPosition={preview.reference_target_position}
         />
         <PreviewCard
           title="Difference"
-          caption="밝은 잔차만 남긴 차분영상"
+          caption="정렬된 current - reference"
           imageUrl={preview.difference_image_data_url}
           preview={preview}
           markerPosition={preview.aligned_target_position}
@@ -143,12 +143,13 @@ export function KmtnetPreviewPanel({
 
       <div className="ml-preview-note">
         <span>
-          현재 프레임은 <strong>{preview.site_label}</strong>의 <code>{frameMetadata.observation_id}</code> 입니다.
-          기준 프레임은 HJD {preview.reference_hjd.toFixed(4)}의 <code>{preview.reference_observation_id}</code> 입니다.
+          세 패널은 모두 <strong>같은 하늘 좌표 영역</strong>을 잘라낸 stamp입니다. 현재 epoch는 <strong>{preview.site_label}</strong>의 <code>{frameMetadata.observation_id}</code>,
+          기준 epoch는 HJD {preview.reference_hjd.toFixed(4)}의 <code>{preview.reference_observation_id}</code> 입니다.
           현재 메타데이터는 <strong>{frameMetadata.filter_band ?? 'I'}-band</strong>, <strong>{frameMetadata.exposure_sec?.toFixed(0) ?? '120'} s</strong> 입니다.
         </span>
         <span>
-          차분영상에서는 정렬된 현재 프레임과 reference를 비교하므로, 변하지 않는 별이 대부분 사라지고 기준영상보다 밝아진 위치만 강하게 남습니다.
+          흐름은 <strong>같은 sky stamp 선택 → current epoch와 reference 정렬 → current - reference 차분</strong> 입니다.
+          그래서 변하지 않는 별은 대부분 사라지고, 기준영상보다 밝아진 위치만 잔차로 남습니다.
           {preview.registration_warning ? ` ${preview.registration_warning}` : ''}
           {frameLoading ? ' 새 프레임을 불러오는 중입니다…' : ''}
         </span>

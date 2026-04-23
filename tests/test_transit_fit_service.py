@@ -112,7 +112,13 @@ def test_fit_transit_model_rejects_missing_bjd_window_bounds(monkeypatch):
         raise AssertionError("Expected fit_transit_model to reject missing BJD bounds")
 
 
-def test_resolve_quadratic_limb_darkening_uses_filter_and_stellar_params():
+def test_resolve_quadratic_limb_darkening_uses_filter_and_stellar_params(monkeypatch):
+    monkeypatch.setattr(
+        transit_fit_service,
+        "_resolve_tabulated_quadratic_limb_darkening",
+        lambda **kwargs: None,
+    )
+
     u1, u2, source, resolved_filter = (
         transit_fit_service._resolve_quadratic_limb_darkening(
             target_id="",
@@ -131,6 +137,11 @@ def test_resolve_quadratic_limb_darkening_uses_filter_and_stellar_params():
 
 
 def test_resolve_quadratic_limb_darkening_falls_back_to_target_archive(monkeypatch):
+    monkeypatch.setattr(
+        transit_fit_service,
+        "_resolve_tabulated_quadratic_limb_darkening",
+        lambda **kwargs: None,
+    )
     monkeypatch.setattr(
         transit_fit_service.transit_archive,
         "get_target",
@@ -289,6 +300,8 @@ def test_runtime_dependency_status_reports_flags(monkeypatch):
     monkeypatch.setattr(transit_fit_service, "_BATMAN_IMPORT_ERROR", "batman import failed")
     monkeypatch.setattr(transit_fit_service, "_HAS_EMCEE", True)
     monkeypatch.setattr(transit_fit_service, "_EMCEE_IMPORT_ERROR", None)
+    monkeypatch.setattr(transit_fit_service, "_HAS_MEIDEM", True)
+    monkeypatch.setattr(transit_fit_service, "_MEIDEM_IMPORT_ERROR", None)
 
     status = transit_fit_service.get_runtime_dependency_status()
 
@@ -298,6 +311,10 @@ def test_runtime_dependency_status_reports_flags(monkeypatch):
             "error": "batman import failed",
         },
         "emcee": {
+            "available": True,
+            "error": None,
+        },
+        "meidem": {
             "available": True,
             "error": None,
         },
