@@ -406,10 +406,18 @@ export function InquiryLayout<TContext = unknown>({
   const handleSiteRating = (rating: number) => { dirtyRef.current = true; setSavedAt(Date.now()); setSiteRating(rating); };
   const handleSiteFeedback = (text: string) => { dirtyRef.current = true; setSavedAt(Date.now()); setSiteFeedback(text); };
 
+  // 생각해보기 접기 버튼을 두 번 누르면 켜지는 시연자 우회 — utils/selfCheckSkip.
+  // 생각해보기와 기록 칸을 함께 빼 준다. 처음에는 생각해보기만 뺐는데, 진행자는
+  // 서술 칸도 청중 앞에서 채워야 다음 화면으로 갈 수 있었다(3단계는 서술 1개가
+  // 남아 「다음 단계」가 잠겼다 — Render 실측 2026-09-07). 아래 두 게이트가
+  // 모두 이 값을 본다.
+  const skipSelfChecks = useSelfCheckSkip();
+
   // Progression gate: a step that asks for notes wants at least ONE of them
   // before moving on — enough to keep the record habit without demanding every
   // box (a full-completion gate would stall a classroom on the first snag).
   const isStepAnswered = (step: (typeof module.steps)[number]) =>
+    skipSelfChecks ||
     step.recordFields.length === 0 ||
     step.recordFields.some((field) => {
       const raw = notes[`${step.id}:${field.id}`];
@@ -424,15 +432,11 @@ export function InquiryLayout<TContext = unknown>({
   // "you may write 모르겠다" hint only applies to the latter — O/X items have no
   // text box, so telling a learner to type there sends them looking for a
   // control that does not exist.
-  // Lab 의 생각해보기 접기 버튼을 두 번 누르면 켜지는 시연자 우회. 여기서도
-  // 생각해보기만 빼고 기록 칸은 그대로 요구한다 — utils/selfCheckSkip.
-  const skipSelfChecks = useSelfCheckSkip();
   const unansweredOnStep = (step: (typeof module.steps)[number]) => {
-    const checks = skipSelfChecks
-      ? 0
-      : (step.selfChecks ?? []).filter(
-          (item) => selfCheckAnswers[`${step.id}:${item.id}`] === undefined,
-        ).length;
+    if (skipSelfChecks) return { checks: 0, fields: 0, total: 0 };
+    const checks = (step.selfChecks ?? []).filter(
+      (item) => selfCheckAnswers[`${step.id}:${item.id}`] === undefined,
+    ).length;
     const fields = step.recordFields.filter((field) => !isFieldFilled(step, field.id)).length;
     return { checks, fields, total: checks + fields };
   };
