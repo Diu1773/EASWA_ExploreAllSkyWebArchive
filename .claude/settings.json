@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -X utf8 \"${CLAUDE_PROJECT_DIR}/docs/print_paper_anchor.py\"",
+            "timeout": 10,
+            "statusMessage": "논문 고정 제약 주입"
+          }
+        ]
+      }
+    ]
+  }
+}
