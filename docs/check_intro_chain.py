@@ -12,7 +12,7 @@
 import io, os, sys
 
 P = os.environ.get('EASWA_PAPER',
-                   r'C:\Users\bmffr\Desktop\Me\ERP2026_Cosmos\EASWA_논문_전체수정본_v15.md')
+                   r'C:\Users\bmffr\Desktop\Me\ERP2026_Cosmos\EASWA_논문_v16.md')
 
 # 서론이 답으로 내놓는 것들. 처음 나오는 자리에 「왜 그것인가」가 붙어 있어야 한다.
 CLAIMS = ['웹', '브라우저', '플랫폼', '자동', '단계', '교사', '예비교사', '학생']
@@ -52,7 +52,7 @@ for w in CLAIMS:
 
 print()
 print('[3·4장의 산출물 이름] 연구문제 앞 본문에 있으면 결과 선취')
-rq = first('이를 위해 다음의 연구문제를 설정하였다') or b
+rq = first('연구문제는 다음과 같다') or b
 for w in PRODUCTS:
     n = first(w)
     if n is None:

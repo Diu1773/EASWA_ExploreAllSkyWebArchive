@@ -9,7 +9,7 @@
 """
 import io, re, sys, collections
 
-DEFAULT = r"C:\Users\bmffr\Desktop\Me\ERP2026_Cosmos\EASWA_논문_전체수정본_v15.md"
+DEFAULT = r"C:\Users\bmffr\Desktop\Me\ERP2026_Cosmos\EASWA_논문_v16.md"
 P = sys.argv[1] if len(sys.argv) > 1 else DEFAULT
 s = io.open(P, encoding="utf-8").read().replace("\r\n", "\n")
 L = s.split("\n")
@@ -23,7 +23,7 @@ BOUNDS = [
     ("3장",  "# Ⅲ.",     "# Ⅳ."),
     ("4장",  "# Ⅳ.",     "# Ⅴ."),
     ("5장",  "# Ⅴ.",     "# Ⅵ."),
-    ("6장",  "# Ⅵ.",     "# 생성형 AI"),
+    ("6장",  "# Ⅵ.",     "## 생성형 AI"),
 ]
 CH = {}
 for name, a, b in BOUNDS:
@@ -68,12 +68,14 @@ for a, b in PAIRS:
 
 # ── B. 서론 — 결과 선취·방법 서술·EASWA 위치 ────────────────────────
 intro = CH["서론"]
-i14 = next(n for n, l in enumerate(intro["lines"]) if l.startswith("## 1.4"))
-i15 = next(n for n, l in enumerate(intro["lines"]) if l.startswith("## 1.5"))
-t14 = "\n".join(intro["lines"][i14:i15])
-if "EASWA" in t14:
-    add("상", "서론", "1.4에 EASWA — 설계 방향 절에서 산출물을 말했다", "%d회" % t14.count("EASWA"))
-pre15 = "\n".join(intro["lines"][:i15])
+# v16부터 서론이 세 절이고 마지막 절이 목적·연구문제다. 절 수에 기대지 않고 마지막 절을 찾는다.
+_secs = [n for n, l in enumerate(intro["lines"]) if re.match(r"## 1\.\d+\.", l)]
+iLast = _secs[-1] if _secs else len(intro["lines"])
+tPre = "\n".join(intro["lines"][_secs[0]:iLast]) if _secs else ""
+if "EASWA" in tPre:
+    add("상", "서론", "목적 절 이전에 EASWA — 문제를 세우는 절에서 산출물을 말했다",
+        "%d회" % tPre.count("EASWA"))
+pre15 = "\n".join(intro["lines"][:iLast])
 for m in re.finditer(r"본 연구(?:는|에서는|가)[^.]{0,60}(?:하였다|도출하였다|개발하였다|구현하였다|설계하였다)", pre15):
     add("상", "서론", "1.5 이전에 연구자 행위 완료형 — 결과 선취", "「%s」" % m.group(0)[:70])
 for w in ["시사점", "공백", "기여는", "본 연구의 기여"]:
@@ -87,7 +89,7 @@ for w in ["시사점", "공백", "기여는", "본 연구의 기여"]:
 PRODUCT_NAMES = ["공통 탐구 흐름", "공용 워크플로", "워크플로 계약", "탐구모듈", "탐구블럭",
                  "기술 실행 부담 완화", "분석 과정의 가시화", "결과 해석의 학습자 수행",
                  "탐구 주제 중심 접근", "수업 적용 가능성 지원"]
-rq = intro["text"].find("이를 위해 다음의 연구문제를 설정하였다")
+rq = intro["text"].find("연구문제는 다음과 같다")
 head = intro["text"][:rq] if rq > 0 else intro["text"]   # 연구문제 자체는 이름을 써도 된다
 for w in PRODUCT_NAMES:
     if w in head:
