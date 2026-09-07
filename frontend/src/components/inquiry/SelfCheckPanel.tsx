@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { useLangStore } from '../../i18n';
+import { isAnswerGateOn } from '../../utils/answerGate';
+import { toggleSelfCheckSkip, useSelfCheckSkip } from '../../utils/selfCheckSkip';
 import { localize } from '../../explorationBlocks/localize';
 import type { SelfCheckItem } from '../../explorationBlocks/types';
 
@@ -19,13 +22,68 @@ interface SelfCheckPanelProps {
  * Answers are owned by InquiryLayout rather than this panel: they have to
  * survive step navigation (this unmounts on every step change) and they ride
  * along with the Step 6 anonymous submission.
+ *
+ * The shell is the Lab's collapsible 생각해보기 (transit-guide) on purpose. The
+ * two used to look like different things — this one an always-open panel, the
+ * Lab's a fold-out bar — so walking 2단계 → 4단계 → 5단계 the same-named block
+ * changed shape and behaviour halfway through (소유자 지적 2026-09-07:
+ * 「생각해보기 위치가 자꾸 바뀌는게 헷갈리더라고」). Position was already
+ * uniform (always after the step's content); the shape was not.
+ *
+ * Folding rules match the Lab's: open by default, remembered per step, and
+ * forced open while unanswered questions are what blocks the next step — a
+ * collapsed panel plus a disabled 「다음」 hides the reason. Double-clicking the
+ * fold button is the presenter escape hatch (utils/selfCheckSkip).
  */
 export function SelfCheckPanel({ items, scope, answers, onAnswer }: SelfCheckPanelProps) {
   const lang = useLangStore((state) => state.lang);
+  const storageKey = `easwa_selfcheck_open_${scope}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(storageKey) !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const skipSelfChecks = useSelfCheckSkip();
+  const unanswered = items.filter((item) => answers[`${scope}:${item.id}`] === undefined).length;
+  const forceOpen = isAnswerGateOn() && unanswered > 0 && !skipSelfChecks;
+  const shown = open || forceOpen;
 
   return (
-    <section className="inquiry-selfcheck">
-      <span className="inquiry-panel-kicker">{lang === 'ko' ? '생각해보기' : 'Check Yourself'}</span>
+    <section className={`transit-guide inquiry-selfcheck-panel${shown ? ' open' : ''}`}>
+      <button
+        type="button"
+        className="transit-guide-toggle"
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          try { localStorage.setItem(storageKey, String(next)); } catch { /* ignore */ }
+        }}
+        onDoubleClick={() => {
+          if (toggleSelfCheckSkip()) {
+            setOpen(false);
+            try { localStorage.setItem(storageKey, 'false'); } catch { /* ignore */ }
+          }
+        }}
+      >
+        <span>{lang === 'ko' ? '생각해보기' : 'Check Yourself'}</span>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ transform: shown ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {!shown ? null : (
+        <div className="inquiry-selfcheck">
       {/* The answer is locked on the first click. Before, the explanation
           revealed the correct option and the buttons stayed live, so a learner
           could switch to it — and only the last answer was recorded. The July
@@ -112,6 +170,8 @@ export function SelfCheckPanel({ items, scope, answers, onAnswer }: SelfCheckPan
           </div>
         );
       })}
+        </div>
+      )}
     </section>
   );
 }

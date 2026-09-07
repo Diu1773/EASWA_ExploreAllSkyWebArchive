@@ -12311,3 +12311,19 @@ body {
   color: var(--text-secondary);
   word-break: keep-all;
 }
+
+/* 블럭의 생각해보기도 Lab 과 같은 접이식 껍데기(transit-guide)를 쓴다. 같은 이름
+   인데 한쪽은 항상 펼친 패널, 한쪽은 접히는 바여서 단계를 넘길 때마다 다른
+   물건처럼 보였다(소유자 지적 2026-09-07). 안쪽 목록은 종전 스타일을 그대로
+   쓰되 테두리·배경이 겹치지 않게 벗긴다. */
+.inquiry-selfcheck-panel {
+  margin-top: 16px;
+}
+
+.inquiry-selfcheck-panel > .inquiry-selfcheck {
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 4px 14px 14px;
+}
