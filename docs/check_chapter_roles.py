@@ -149,6 +149,33 @@ for name in CH:
                 continue   # 부정·유보·한계 서술은 허용
             add("상", name, "못 하는 주장 「%s」 (%s)" % (w, why), "「%s」" % sent[:80])
 
+# ── I. 금지어 (docs/문체규칙_2026-09.md 1·2·5절) ───────────────────
+BAN = {"견주": "비교하다", "겨냥": "다루다·대상으로 하다", "겨누": "대상으로 하다",
+       "담아내": "담다·포함하다", "녹여내": "포함하다", "묻히": "포함하다",
+       "출렁": "밝기가 변하다", "평정": "점수로 매기다", "귀속": "분류하다·넣다",
+       "가 그것이다": "각각 살펴야 한다", "에 의해": "주어를 세운다",
+       "범위에 두지 않": "무엇을 했는지로 쓴다"}
+APPENDIX = next((n for n, l in enumerate(L) if l.startswith("# 부록 A")), len(L))
+for n in range(APPENDIX):          # 부록의 참여자 원문은 한 글자도 고치지 않으므로 검사에서 뺀다
+    line = L[n]
+    if line.startswith("|") and n > APPENDIX:
+        continue
+    ch = "?"
+    for nm in CH:
+        if CH[nm]["start"] <= n < CH[nm]["start"] + len(CH[nm]["lines"]):
+            ch = nm; break
+    for w, alt in BAN.items():
+        for m in re.finditer(re.escape(w), line):
+            frag = line[max(0, m.start() - 30):m.end() + 22]
+            add("상", ch, "금지어 「%s」 → %s" % (w, alt), "%d행 …%s…" % (n + 1, frag))
+
+# ── J. 원리 도출표의 이론 근거가 그 장 본문에 있는가 ───────────────
+tbl = "\n".join(l for l in CH["2장"]["lines"] if l.startswith("|"))
+body2 = "\n".join(l for l in CH["2장"]["lines"] if not l.startswith("|") and not l.startswith("#"))
+for au, yr in sorted(cite(tbl)):
+    if au not in body2:
+        add("상", "2장", "표 2-1이 근거로 든 이론이 본문에 없다", "%s (%s) — 표에서만 나온다" % (au, yr))
+
 # ── 출력 ────────────────────────────────────────────────────────────
 order = {"상": 0, "중": 1, "하": 2}
 findings.sort(key=lambda f: (order[f[0]], f[1]))
