@@ -148,6 +148,21 @@ def main() -> None:
     print('주. 관측을 다시 하지 않는다. TIC 등급·좌표와 가우시안 점퍼짐함수로 구경에 드는')
     print('    광량을 구한 것이다. 측광·적합의 재현은 backend/services/transit_service.py.')
     print('    카탈로그 조회 결과는 %s에 캐시로 남는다.' % os.path.basename(CACHE))
+    print()
+    print('독립 근거와의 대조 — 이 계산은 근사이고 혼입을 크게 잡는다')
+    print('  %-34s %-10s %s' % ('출처', '희석 계수', '비고'))
+    print('  %-34s %-10.4f %s' % ('SPOC CROWDSAP (섹터 33 헤더)', 0.89688,
+                                  'SPOC 최적 구경 기준. FLFRCSAP=0.8559'))
+    print('  %-34s %-10.4f %s' % ('TIC contratio 0.1383', 1/(1+0.1383218), 'TIC 정의 구경'))
+    print('  %-34s %-10.4f %s' % ('이 스크립트 (가우시안 FWHM 1.5px)', dilution,
+                                  '반지름 2.5px 원형'))
+    print()
+    print('  세 값이 다른 이유는 구경이 다르기 때문이지만, 구경 넓이를 맞춰 비교해도')
+    print('  이 스크립트가 약 20% 크게 잡는다. SPOC 헤더의 FLFRCSAP=0.8559는 SPOC 구경에')
+    print('  대상 자신의 빛이 85.6%만 든다는 뜻인데, 가우시안 FWHM 1.5픽셀 근사는 더 넓은')
+    print('  구경에 99.95%가 든다고 계산한다 — 실제 TESS 점퍼짐함수가 훨씬 넓게 퍼진다.')
+    print('  **따라서 이 스크립트의 0.807을 단일 값으로 쓰면 안 된다.** 혼입 기여는')
+    print('  SPOC 값과 이 근사 사이, 대략 8~10%%로 보는 것이 타당하다.')
 
 
 if __name__ == '__main__':
