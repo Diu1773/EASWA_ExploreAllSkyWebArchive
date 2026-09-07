@@ -58,8 +58,11 @@ for a, b in PAIRS:
         if not any(w in k for k in kept):
             kept.append(w)
     # 상투 어구는 뺀다
-    STOCK = ("공공 천문자료 기반 천문탐구", "공공 천문자료 서비스", "공공 천문자료를 활용한", "실제 자료 기반", "기존 공공 천문자료", "학교 천문탐구", "교육용 웹 플랫폼", "설계 원리", "탐구 흐름", "2022 개정 과학과 교육과정", "현직 교사 중심 현장 검토", "구성하였다. 이를 통해", "제공한다. ESASky는", "현직 교사와 과학교육 전공자")
-    kept = [w for w in kept if not any(st in w or w.strip() in st for st in STOCK)]
+    STOCK = ("공공 천문자료 기반 천문탐구", "공공 천문자료 서비스", "공공 천문자료를 활용한", "실제 자료 기반", "기존 공공 천문자료", "학교 천문탐구", "교육용 웹 플랫폼", "설계 원리", "탐구 흐름", "2022 개정 과학과 교육과정", "현직 교사 중심 현장 검토", "구성하였다. 이를 통해", "제공한다. ESASky는", "현직 교사와 과학교육 전공자", "천문자료를 활용한 학교", "공공 천문자료 기반")
+    def is_stock(w):
+        core = w.strip()
+        return any(st in w or core in st or core[1:] in st or core[:-1] in st for st in STOCK)
+    kept = [w for w in kept if not is_stock(w)]
     for w in kept[:6]:
         add("중", "%s↔%s" % (a, b), "장 간 동일 문구", "「%s」" % w)
 
