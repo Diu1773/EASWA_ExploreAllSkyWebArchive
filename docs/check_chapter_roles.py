@@ -50,15 +50,30 @@ def phrases(text, n=15):
                 out.add(w)
     return out
 PAIRS = [("서론", "2장"), ("서론", "3장"), ("2장", "3장"), ("4장", "5장"), ("5장", "6장"), ("서론", "5장")]
+
+KEEP = lambda l: (l.strip() and not l.startswith("#") and l != "---"
+                  and not l.startswith("|") and not l.startswith("**표") and not l.startswith("**그림"))
+
+def text_before(ch, heading):
+    """장 본문 가운데 heading 절 앞부분만 돌려준다. CH[ch]["text"]와 같은 필터를 쓴다."""
+    ls = CH[ch]["lines"]
+    k = next((n for n, l in enumerate(ls) if l.startswith(heading)), len(ls))
+    return chr(10).join(l for l in ls[:k] if KEEP(l))
+
+def body_of(ch):
+    """5장은 «범위와 한계»를 뺀 본론만 비교한다 — 한계 항목이 6장 후속과제와 짝을 이루는 것은
+    학술 관행이므로 문구가 겹치는 것을 결함으로 보지 않는다."""
+    return text_before("5장", "## 5.5.") if ch == "5장" else CH[ch]["text"]
+
 for a, b in PAIRS:
-    common = phrases(CH[a]["text"]) & phrases(CH[b]["text"])
+    common = phrases(body_of(a)) & phrases(body_of(b))
     # 가장 긴 것만 남긴다 (부분 문자열 제거)
     kept = []
     for w in sorted(common, key=len, reverse=True):
         if not any(w in k for k in kept):
             kept.append(w)
     # 상투 어구는 뺀다
-    STOCK = ("공공 천문자료 기반 천문탐구", "공공 천문자료 서비스", "공공 천문자료를 활용한", "실제 자료 기반", "기존 공공 천문자료", "학교 천문탐구", "교육용 웹 플랫폼", "설계 원리", "탐구 흐름", "2022 개정 과학과 교육과정", "현직 교사 중심 현장 검토", "구성하였다. 이를 통해", "제공한다. ESASky는", "현직 교사와 과학교육 전공자", "천문자료를 활용한 학교", "공공 천문자료 기반")
+    STOCK = ("공공 천문자료 기반 천문탐구", "공공 천문자료 서비스", "공공 천문자료를 활용한", "실제 자료 기반", "기존 공공 천문자료", "학교 천문탐구", "교육용 웹 플랫폼", "설계 원리", "탐구 흐름", "2022 개정 과학과 교육과정", "현직 교사 중심 현장 검토", "구성하였다. 이를 통해", "제공한다. ESASky는", "현직 교사와 과학교육 전공자", "천문자료를 활용한 학교", "공공 천문자료 기반", "서비스 사례분석, 교육과정")
     def is_stock(w):
         core = w.strip()
         return any(st in w or core in st or core[1:] in st or core[:-1] in st for st in STOCK)
@@ -105,7 +120,11 @@ for m in re.finditer(r"[^.]{0,50}(?:구조가 적합하다|방식이 적합하�
 ch2 = CH["2장"]
 for m in re.finditer(r"본 연구(?:는|에서는)[^.]{0,80}(?:설정하였다|분석하였다|조사하였다|수집하였다|측정하였다)", ch2["text"]):
     add("상", "2장", "이론적 배경에 방법 서술", "「%s」" % m.group(0)[:70])
-cite = lambda t: set(re.findall(r"\(([A-Z][A-Za-z'’\- ]+?(?: et al\.)?|[가-힣]{2,4}(?:·[가-힣]{2,4})*),\s*(\d{4}[a-z]?)", t))
+# 괄호형 (Uddin, 2026)과 서술형 Uddin(2026)을 함께 잡는다 — 서술형만 빠뜨리면
+# 앞 장에서 이미 든 문헌을 «결론에서 처음 나온다»고 잘못 잡는다.
+_AU = r"([A-Z][A-Za-z'’\- ]+?(?: et al\.)?|[가-힣]{2,4}(?:·[가-힣]{2,4})*)"
+cite = lambda t: (set(re.findall(r"\(" + _AU + r",\s*(\d{4}[a-z]?)", t))
+                  | set(re.findall(_AU + r"\s*\((\d{4}[a-z]?)\)", t)))
 both = cite(intro["text"]) & cite(ch2["text"])
 for au, yr in sorted(both):
     add("하", "서론↔2장", "같은 문헌을 두 장에서 인용 — 논지가 같은지 사람이 확인", "%s (%s)" % (au, yr))
@@ -133,11 +152,16 @@ for m in re.finditer(r"[^.]{0,40}(?:예상한 대로|예측한 대로|예상대�
 # ── D. 3장 — 결과·해석 동사 ─────────────────────────────────────────
 ch3 = CH["3장"]
 RESULT_V = ["나타났다", "응답하였다", "확인되었다", "도출되었다", "보고되었다", "높았다", "낮았다", "많았다"]
+# 「응답하였다」는 방법 장에서 «누가 무엇에 응답했는가»라는 절차 서술로 쓰인다.
+# 결과 서술일 때만 앞에 비율·순위가 붙으므로 그 형태에서만 잡는다.
+PROC_OK = re.compile(r"\d+%|가장 많|가장 높|순으로|비율|평균")
 INTERP_V = ["의미한다", "시사한다", "해석할 수 있다", "뜻한다", "보여 준다", "보여준다"]
 for v in RESULT_V:
     for m in re.finditer(r"[^.]{0,50}" + v, ch3["text"]):
         frag = m.group(0)
         if re.search(r"선행|연구에서는|문헌|Wong|Kang|Belland", frag):   # 선행연구 인용은 허용
+            continue
+        if v == "응답하였다" and not PROC_OK.search(frag):   # 절차 서술
             continue
         add("중", "3장", "연구 방법에 결과 동사 「%s」" % v, "「%s」" % frag[-60:])
 for v in INTERP_V:
@@ -160,7 +184,8 @@ for w in ["공백"]:
     if w in ch5["text"] and w not in intro["text"]:
         add("상", "5장", "서론에 없는 말 「%s」을 서론에서 받은 것처럼 회수" % w, "%d회" % ch5["text"].count(w))
 nums4 = set(re.findall(r"\d+(?:\.\d+)?%|\d+명|\d+건|0\.\d{3,4}", "\n".join(CH[k]["text"] for k in ("서론", "2장", "3장", "4장"))))
-nums5 = set(re.findall(r"\d+(?:\.\d+)?%|\d+명|\d+건|0\.\d{3,4}", ch5["text"]))
+nums5 = set(re.findall(r"\d+(?:\.\d+)?%|\d+명|\d+건|0\.\d{3,4}",
+                       text_before("5장", "## 5.5.")))   # 한계 절의 조사 조건 수치는 뺀다
 for x in sorted(nums5 - nums4):
     add("중", "5장", "1~4장 어디에도 없는 수치가 논의에 등장", x)
 for v in ["나타났다", "응답하였다"]:
