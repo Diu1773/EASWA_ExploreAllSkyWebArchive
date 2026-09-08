@@ -196,7 +196,8 @@ for v in ["나타났다", "응답하였다"]:
 # ── G. 6장 — 연구문제 수와 답 수·5장 반복·새 인용 ─────────────────
 ch6 = CH["6장"]
 rq = len([l for l in intro["lines"] if re.match(r"^\d\. ", l.strip())])
-ords = re.findall(r"(?:^|\n)(첫째|둘째|셋째|넷째|다섯째)", CH["6장"]["text"])
+# 서수는 줄 시작뿐 아니라 한 문단 안 문장 시작에도 온다(「… 하였다. 둘째, …」).
+ords = re.findall(r"(?:^|\n|[.] )(첫째|둘째|셋째|넷째|다섯째),", CH["6장"]["text"])
 if ords and len(ords) != rq:
     add("중", "6장", "6.1의 「첫째~」 개수와 연구문제 수 불일치", "첫째~ %d개 vs 연구문제 %d개 — 둘째·셋째가 같은 연구문제를 나눠 답하면 그 사실을 문장에 적을 것" % (len(ords), rq))
 new6 = cite(ch6["text"]) - cite(intro["text"]) - cite(ch2["text"]) - cite(CH["3장"]["text"]) - cite(CH["4장"]["text"]) - cite(ch5["text"])

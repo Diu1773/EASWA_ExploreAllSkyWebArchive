@@ -50,7 +50,8 @@ for n in range(APP, len(L)):
     first = None
     for v in variants(term):
         for k in range(BODY, APP):
-            if L[k].startswith('#') or L[k].startswith('**표') or L[k].startswith('**그림'):
+            # 그림 캡션은 본문이 읽는 설명이므로 첫 등장으로 인정한다. 표 캡션만 뺀다.
+            if L[k].startswith('#') or L[k].startswith('**표'):
                 continue
             if v in L[k]:
                 if first is None or k < first[0]:
