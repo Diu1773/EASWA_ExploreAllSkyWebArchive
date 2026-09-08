@@ -60,3 +60,6 @@ docs/캡처_*/
 
 # 시트 원자료 내보내기 (익명이지만 UA 문자열 포함 - 커밋하지 않음)
 docs/survey/data/
+
+# WASP-121 분해 검증이 받아 두는 FITS·중간 산출물 (재실행하면 다시 받는다)
+docs/validation/_wasp121_cache/
