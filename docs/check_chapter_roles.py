@@ -212,7 +212,7 @@ for name in CH:
         for sent in sents(CH[name]["text"].replace("\n", " ")):
             if w not in sent:
                 continue
-            if re.search(r"아니|아닌|않|못|없|검증하지|측정하지|범위|후속|과제|외적 타당화|초점을 두|한계|다루지|대신하지", sent):
+            if re.search(r"아니|아닌|않|못|없|검증하지|측정하지|범위|후속|과제|외적 타당화|초점을 두|한계|다루지|대신하지|선행되어야|선행되는|판단할 수 없", sent):
                 continue   # 부정·유보·한계 서술은 허용
             add("상", name, "못 하는 주장 「%s」 (%s)" % (w, why), "「%s」" % sent[:80])
 
