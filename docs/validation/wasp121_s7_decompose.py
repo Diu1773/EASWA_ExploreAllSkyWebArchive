@@ -112,8 +112,8 @@ def easwa_photometry(cube, aper_mask):
     return net, (cx, cy, n_pix, int(ring.sum()))
 
 
-def fit(flux, err, time, label):
-    """정규화 광량을 등급으로 바꿔 플랫폼 적합기에 넣는다."""
+def fit(flux, err, time, label, **fit_kw):
+    """광도곡선을 플랫폼 적합기에 넣는다. fit_kw 로 적합 설정을 바꿀 수 있다."""
     from schemas.lightcurve import LightCurvePoint
     from services.transit_fit_service import fit_transit_model
     good = np.isfinite(flux) & np.isfinite(time) & (flux > 0)
@@ -128,7 +128,7 @@ def fit(flux, err, time, label):
                            mag_error=float(e[i]) if np.isfinite(e[i]) and e[i] > 0 else 1e-4)
            for i in range(f.size)]
     res = fit_transit_model(pts, period=PERIOD, t0=T0_BJD, target_id=TARGET,
-                            fit_mode='phase_fold')
+                            fit_mode='phase_fold', **fit_kw)
     f = res.fitted_params
     return f.rp_rs, f.rp_rs_err, f.reduced_chi_squared, len(pts)
 
@@ -167,6 +167,16 @@ def main() -> None:
         rows.append(('C', 'SPOC SAP (최적 구경 마스크)', v, e, x2, n))
         v, e, x2, n = fit(lc['pdc'][g], lc['pdc_err'][g], lc['time'][g], 'D')
         rows.append(('D', 'SPOC PDCSAP (체계오차 제거 + 혼입 보정)', v, e, x2, n))
+        # 문헌은 주연감광을 «적합»했다 (Daylan et al. 2021: q1=0.115, q2=0.42 →
+        # u1=0.285±0.058, u2=0.06±0.11). EASWA 기본값은 Claret 표값 고정이다.
+        v, e, x2, n = fit(lc['pdc'][g], lc['pdc_err'][g], lc['time'][g], 'E',
+                          fit_limb_darkening=True)
+        rows.append(('E', 'D + 주연감광을 적합 (문헌 방식)', v, e, x2, n))
+        # 문헌 기준선은 궤도별 3차 스플라인이지만 **이 적합기로는 재현할 수 없다.**
+        # transit_fit_service._prepare_fit_series 554행이
+        #   baseline_order = 1 if int(baseline_order) > 0 else 0
+        # 으로 잘라 0차 또는 1차만 지원한다. 3을 넘겨도 1로 처리되므로 조건을 두지 않는다.
+        # 기준선 차수의 몫은 «측정하지 못한 것»으로 남긴다.
 
     print()
     print('%-3s %-42s %-18s %-10s %-9s %s' % ('', '처리', 'Rp/R*', '문헌 대비', 'chi2_red', '점수'))
@@ -186,13 +196,23 @@ def main() -> None:
         ('A', 'C', '구경 정의 (원형 2.5px → SPOC 최적 마스크). 둘 다 혼입 미보정'),
         ('A', 'B', '이웃별 혼입 보정 (CROWDSAP). 둘 다 EASWA 구경'),
         ('C', 'D', 'SPOC의 혼입 보정 + 체계오차 제거. 둘 다 SPOC 구경'),
+        ('D', 'E', '주연감광: Claret 표값 고정 → 적합 (문헌 방식)'),
     ]
     for a, b, why in pairs:
         if a in val and b in val:
             print('  %-46s %+.1f%%p' % (why, (val[b] - val[a]) / RATROR_LIT * 100))
-    if 'D' in val:
-        print('  %-46s %+.1f%%p' % ('남는 차이 — 적합 설정과 모델 가정',
-                                    (RATROR_LIT - val['D']) / RATROR_LIT * 100))
+    last = 'E' if 'E' in val else 'D'
+    if last in val:
+        print('  %-46s %+.1f%%p' % ('남는 몫 — 아래 셋이 섞여 있고 분리하지 못했다',
+                                    (RATROR_LIT - val[last]) / RATROR_LIT * 100))
+        print('     · 기준선 차수 — 이 적합기는 0차·1차만 지원한다(문헌은 궤도별 3차 스플라인)')
+        print('     · 희석 처리 — SPOC은 CROWDSAP 0.91131(혼입 8.87%)로 나누고,')
+        print('       문헌은 희석을 파라미터로 적합해 0.0765±0.0082를 얻었다')
+        print('     · 적합기 — 최소제곱+야코비안 대 allesfitter+emcee')
+        print()
+        print('문헌 Rp/R* 0.12488 ± 0.00072 (Daylan et al. 2021 · allesfitter + emcee ·')
+        print('  섹터 7 2분 케이던스 · 주연감광 적합 · SAP에 궤도별 3차 스플라인 ·')
+        print('  희석을 파라미터로 두어 0.0765 ± 0.0082 얻음)')
 
     out = {'target': TARGET, 'sector': SECTOR, 'exptime_s': exptime,
            'period_d': PERIOD, 't0_bjd': T0_BJD, 'lit_ratror': RATROR_LIT,
