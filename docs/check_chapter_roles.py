@@ -232,6 +232,9 @@ for n in range(APPENDIX):          # 부록의 참여자 원문은 한 글자도
     for nm in CH:
         if CH[nm]["start"] <= n < CH[nm]["start"] + len(CH[nm]["lines"]):
             ch = nm; break
+    # 소유자가 정한 범주 이름은 고유명이므로 금지어 검사에서 뺀다.
+    # 「미귀속」은 문항 20-1 의 부호화 범주다(v16 부록 B.3 에서 확정).
+    line = line.replace('미귀속', '')
     for w, alt in BAN.items():
         for m in re.finditer(re.escape(w), line):
             frag = line[max(0, m.start() - 30):m.end() + 22]
