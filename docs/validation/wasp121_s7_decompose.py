@@ -120,15 +120,17 @@ def fit(flux, err, time, label):
     f = flux[good] / np.nanmedian(flux[good])
     t = time[good]
     e = (err[good] / np.nanmedian(flux[good])) if err is not None else np.full(f.size, np.nanstd(f))
-    mag = -2.5 * np.log10(f)
-    mag_err = np.where(f > 0, 2.5 / math.log(10) * (e / f), np.nan)
+    # 적합기는 LightCurvePoint.magnitude 를 «변환 없이» flux 로 읽는다
+    # (transit_fit_service._prepare_fit_series). 필드 이름만 magnitude 이고,
+    # 등급으로 바꿔 넣으면 식이 뒤집혀 해가 경계로 달아난다.
     pts = [LightCurvePoint(hjd=float(t[i]) + 2457000.0, phase=None,
-                           magnitude=float(mag[i]),
-                           mag_error=float(mag_err[i]) if np.isfinite(mag_err[i]) else 0.001)
+                           magnitude=float(f[i]),
+                           mag_error=float(e[i]) if np.isfinite(e[i]) and e[i] > 0 else 1e-4)
            for i in range(f.size)]
     res = fit_transit_model(pts, period=PERIOD, t0=T0_BJD, target_id=TARGET,
                             fit_mode='phase_fold')
-    return res, len(pts)
+    f = res.fitted_params
+    return f.rp_rs, f.rp_rs_err, f.reduced_chi_squared, len(pts)
 
 
 def main() -> None:
@@ -149,41 +151,58 @@ def main() -> None:
           % (cx, cy, npix, nring))
 
     rows = []
-    r, n = fit(net, None, t_ok, 'A')
-    rows.append(('A', 'EASWA 구경측광 (원형 2.5px, 배경 고리 4~6px)', r.ratror, r.ratror_error, n))
+    v, e, x2, n = fit(net, None, t_ok, 'A')
+    rows.append(('A', 'EASWA 구경측광 (원형 2.5px, 배경 고리 4~6px)', v, e, x2, n))
 
     if meta and meta['crowdsap'] == meta['crowdsap']:
         # 혼입 보정: 구경에 든 남의 빛을 빼고 대상 몫만 남긴다.
         med = np.nanmedian(net)
         corrected = (net - med * (1.0 - meta['crowdsap'])) / meta['crowdsap']
-        r, n = fit(corrected, None, t_ok, 'B')
-        rows.append(('B', 'A + CROWDSAP 혼입 보정', r.ratror, r.ratror_error, n))
+        v, e, x2, n = fit(corrected, None, t_ok, 'B')
+        rows.append(('B', 'A + CROWDSAP 혼입 보정', v, e, x2, n))
 
     if lc is not None:
         g = lc['quality'] == 0
-        r, n = fit(lc['sap'][g], lc['sap_err'][g], lc['time'][g], 'C')
-        rows.append(('C', 'SPOC SAP (최적 구경 마스크)', r.ratror, r.ratror_error, n))
-        r, n = fit(lc['pdc'][g], lc['pdc_err'][g], lc['time'][g], 'D')
-        rows.append(('D', 'SPOC PDCSAP (체계오차 제거 + 혼입 보정)', r.ratror, r.ratror_error, n))
+        v, e, x2, n = fit(lc['sap'][g], lc['sap_err'][g], lc['time'][g], 'C')
+        rows.append(('C', 'SPOC SAP (최적 구경 마스크)', v, e, x2, n))
+        v, e, x2, n = fit(lc['pdc'][g], lc['pdc_err'][g], lc['time'][g], 'D')
+        rows.append(('D', 'SPOC PDCSAP (체계오차 제거 + 혼입 보정)', v, e, x2, n))
 
     print()
-    print('%-3s %-40s %-18s %-9s %s' % ('', '처리', 'Rp/R*', '문헌 대비', '점수'))
-    prev = None
-    for key, desc, v, e, n in rows:
+    print('%-3s %-42s %-18s %-10s %-9s %s' % ('', '처리', 'Rp/R*', '문헌 대비', 'chi2_red', '점수'))
+    for key, desc, v, e, x2, n in rows:
         d = (v - RATROR_LIT) / RATROR_LIT * 100
-        step = '' if prev is None else '  (앞 단계와 %+.1f%%p)' % (d - prev)
-        print('%-3s %-40s %.5f ± %.5f  %+6.1f%%%s' % (key, desc, v, e or 0, d, step))
-        print('%-3s %-40s %s %d점' % ('', '', ' ' * 22, n))
-        prev = d
-    print('%-3s %-40s %.5f %19s' % ('문헌', 'Daylan et al. (2021)', RATROR_LIT, '기준'))
+        print('%-3s %-42s %.5f±%.5f %+6.1f%%    %-9.2f %d점'
+              % (key, desc, v, e or 0, d, x2, n))
+    print('%-3s %-42s %.5f %20s' % ('문헌', 'Daylan et al. (2021)', RATROR_LIT, '기준'))
+
+    # 네 조건은 «구경 정의»와 «혼입·체계오차 보정» 두 축의 조합이다. 순서대로 뺄셈하면
+    # 두 축이 섞이므로, 한 축만 다른 짝끼리 비교한다.
+    val = {k: v for k, _, v, _, _, _ in rows}
+    print()
+    print('한 축만 다른 짝 비교 — 이것이 «방법 하나의 몫»이다')
+    print('  %-46s %s' % ('무엇이 달라지나', '차이'))
+    pairs = [
+        ('A', 'C', '구경 정의 (원형 2.5px → SPOC 최적 마스크). 둘 다 혼입 미보정'),
+        ('A', 'B', '이웃별 혼입 보정 (CROWDSAP). 둘 다 EASWA 구경'),
+        ('C', 'D', 'SPOC의 혼입 보정 + 체계오차 제거. 둘 다 SPOC 구경'),
+    ]
+    for a, b, why in pairs:
+        if a in val and b in val:
+            print('  %-46s %+.1f%%p' % (why, (val[b] - val[a]) / RATROR_LIT * 100))
+    if 'D' in val:
+        print('  %-46s %+.1f%%p' % ('남는 차이 — 적합 설정과 모델 가정',
+                                    (RATROR_LIT - val['D']) / RATROR_LIT * 100))
 
     out = {'target': TARGET, 'sector': SECTOR, 'exptime_s': exptime,
            'period_d': PERIOD, 't0_bjd': T0_BJD, 'lit_ratror': RATROR_LIT,
            'aperture': {'radius_px': APER_R, 'annulus_px': [ANN_IN, ANN_OUT],
                         'centre_px': [cx, cy], 'n_pixels': npix},
            'crowdsap': meta['crowdsap'] if meta else None,
-           'rows': [{'key': k, 'desc': d, 'ratror': v, 'error': e, 'points': n}
-                    for k, d, v, e, n in rows]}
+           'rows': [{'key': k, 'desc': d, 'rp_rs': v, 'rp_rs_err': e,
+                     'reduced_chi_squared': x2, 'points': n,
+                     'vs_literature_pct': (v - RATROR_LIT) / RATROR_LIT * 100}
+                    for k, d, v, e, x2, n in rows]}
     p = os.path.join(CACHE, 's%02d_decompose.json' % SECTOR)
     io.open(p, 'w', encoding='utf-8').write(json.dumps(out, ensure_ascii=False, indent=1))
     print()
